@@ -216,10 +216,24 @@ function applyEffect(effect: EffectDef, source: BattleUnit, player: BattleUnit[]
     const reordered = [...allies];
     reordered.splice(from, 1);
     reordered.splice(to, 0, source);
+    const beforePositions = new Map(allies.map((unit) => [unit.unitId, unit.position]));
     const positions = allies.map((unit) => unit.position).sort((a, b) => a - b);
     reordered.forEach((unit, index) => { unit.position = positions[index]; });
     ctx.contribution.byUnitId[source.unitId].usefulMoves += 1;
-    addEvent(ctx, { type: "unitMoved", sourceUnitId: source.unitId, side: source.side, before: positions[from], after: positions[to], messageZh: `${unitName(source)}跃至后位。`, metadata: { fromOrder: from, toOrder: to } });
+    for (const unit of reordered) {
+      const before = beforePositions.get(unit.unitId);
+      if (before === undefined || before === unit.position) continue;
+      const isSource = unit.unitId === source.unitId;
+      addEvent(ctx, {
+        type: "unitMoved",
+        sourceUnitId: unit.unitId,
+        side: unit.side,
+        before,
+        after: unit.position,
+        messageZh: isSource ? `${unitName(source)}跃至后位。` : `${unitName(unit)}补位换位。`,
+        metadata: { fromOrder: allies.findIndex((ally) => ally.unitId === unit.unitId), toOrder: reordered.findIndex((ally) => ally.unitId === unit.unitId), causeUnitId: source.unitId },
+      });
+    }
     if (promoted && effect.buffPromotedAllyAttack) modifyAttack(promoted, effect.buffPromotedAllyAttack, source, ctx, `${unitName(source)}跃至后位，${unitName(promoted)}补到前方并获得 +${effect.buffPromotedAllyAttack} 攻击。`);
     return;
   }

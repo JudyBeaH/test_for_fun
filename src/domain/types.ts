@@ -423,8 +423,8 @@ export interface BattleOutput {
 export type CampAction =
   | { type: "toggleHold"; slotKind: "animal" | "item"; slotId: string; expectedRevision?: number }
   | { type: "refresh"; expectedRevision?: number }
-  | { type: "recruitToTeam"; slotId: string; expectedRevision?: number }
-  | { type: "recruitToReserve"; slotId: string; expectedRevision?: number }
+  | { type: "recruitToTeam"; slotId: string; targetIndex?: number; expectedRevision?: number }
+  | { type: "recruitToReserve"; slotId: string; targetIndex?: number; expectedRevision?: number }
   | { type: "recruitMerge"; slotId: string; targetInstanceId: string; expectedRevision?: number }
   | { type: "moveOwned"; sourceArea: "team" | "reserve"; sourceIndex: number; targetArea: "team" | "reserve"; targetIndex: number; expectedRevision?: number }
   | { type: "mergeOwned"; sourceInstanceId: string; targetInstanceId: string; expectedRevision?: number }

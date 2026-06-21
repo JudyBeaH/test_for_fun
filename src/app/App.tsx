@@ -216,6 +216,7 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
   const camp = expedition.camp!;
   const [selected, setSelected] = useState<SelectedFocus | null>(null);
   const [dragging, setDragging] = useState<DragPayload | null>(null);
+  const draggingRef = useRef<DragPayload | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const selectedMember = selected?.kind === "member" ? (selected.area === "team" ? expedition.team : expedition.reserve)[selected.index] : undefined;
   const selectedAnimalOffer = selected?.kind === "animalOffer" ? camp.animalSlots.find((slot) => slot.slotId === selected.slotId) : undefined;
@@ -223,7 +224,13 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
   const firstOpenTeamIndex = Array.from({ length: 5 }).findIndex((_, index) => !expedition.team[index]);
 
   function startDrag(payload: DragPayload) {
+    draggingRef.current = payload;
     setDragging(payload);
+  }
+
+  function stopDrag() {
+    draggingRef.current = null;
+    setDragging(null);
   }
 
   function cancelLongPress() {
@@ -249,19 +256,20 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
         }
       },
       onPointerMove: (event: ReactPointerEvent) => {
-        if (dragging) event.preventDefault();
+        if (draggingRef.current) event.preventDefault();
       },
       onPointerUp: (event: ReactPointerEvent) => {
         cancelLongPress();
-        if (!dragging) return;
+        const payload = draggingRef.current;
+        if (!payload) return;
         event.preventDefault();
         const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-drop-kind]") ?? null;
-        handleDrop(dragging, target);
-        setDragging(null);
+        handleDrop(payload, target);
+        stopDrag();
       },
       onPointerCancel: () => {
         cancelLongPress();
-        setDragging(null);
+        stopDrag();
       },
     };
   }
@@ -282,7 +290,7 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
       }
       if (payload.kind === "animalOffer") {
         if (targetInstanceId && target.dataset.speciesId === payload.speciesId) onAction({ type: "recruitMerge", slotId: payload.slotId, targetInstanceId });
-        else onAction({ type: area === "team" ? "recruitToTeam" : "recruitToReserve", slotId: payload.slotId });
+        else onAction({ type: area === "team" ? "recruitToTeam" : "recruitToReserve", slotId: payload.slotId, targetIndex: index });
       }
       if (payload.kind === "itemOffer" && targetInstanceId) {
         onAction({ type: "buyAndUseItem", slotId: payload.slotId, targetInstanceIds: [targetInstanceId] });

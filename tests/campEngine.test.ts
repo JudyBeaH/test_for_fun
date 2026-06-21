@@ -39,6 +39,18 @@ describe("v0.2 camp market and merge", () => {
     expect(state.team).toHaveLength(2);
   });
 
+  it("市场动物拖到指定空战斗位时填入该空格", () => {
+    let state = createExpedition(13);
+    state.team = [testMember("front", "hare"), null, null, null, null];
+    state.camp!.animalSlots[0].offer = { offerInstanceId: "a", speciesId: "frog" };
+
+    state = applyCampAction(state, { type: "recruitToTeam", slotId: state.camp!.animalSlots[0].slotId, targetIndex: 3 }).state;
+
+    expect(state.team[0]?.instanceId).toBe("front");
+    expect(state.team[3]?.speciesId).toBe("frog");
+    expect(state.camp!.animalSlots[0].offer).toBeNull();
+  });
+
   it("手动合成保留目标并产生升级发现", () => {
     let state = createExpedition(3);
     for (let i = 0; i < 2; i += 1) {
@@ -64,6 +76,22 @@ describe("v0.2 camp market and merge", () => {
     expect(rules.carrySupplyLimit).toBe(3);
     expect(rules.supplyCap).toBe(12);
     expect(rules.freeRefreshes).toBe(1);
+  });
+
+  it("刷新后标记留意的动物和物品会按槽位保留到下个营地", () => {
+    let state = createExpedition(14);
+    state = applyCampAction(state, { type: "refresh" }).state;
+    state = applyCampAction(state, { type: "toggleHold", slotKind: "animal", slotId: state.camp!.animalSlots[0].slotId }).state;
+    state = applyCampAction(state, { type: "toggleHold", slotKind: "item", slotId: state.camp!.itemSlots[0].slotId }).state;
+    const animalOffer = state.camp!.animalSlots[0].offer;
+    const itemOffer = state.camp!.itemSlots[0].offer;
+
+    const nextCamp = enterCamp({ ...state, round: state.round + 1 }, state.camp!.supply);
+
+    expect(nextCamp.camp!.animalSlots[0].held).toBe(true);
+    expect(nextCamp.camp!.animalSlots[0].offer).toEqual(animalOffer);
+    expect(nextCamp.camp!.itemSlots[0].held).toBe(true);
+    expect(nextCamp.camp!.itemSlots[0].offer).toEqual(itemOffer);
   });
 
   it("告别返还补给可超过入营上限，并按等级返还 1/3/5", () => {

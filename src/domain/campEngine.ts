@@ -138,8 +138,8 @@ function rollItemSlot(seed: number, round: number, index: number): OfferSlot<Ite
 export function enterCamp(state: ExpeditionState, previousLeftover = 0): ExpeditionState {
   const next = structuredClone(state) as ExpeditionState;
   const rules = computeCampRules(next);
-  const heldAnimal = new Map(next.camp?.animalSlots.filter((slot) => slot.held && slot.offer).map((slot) => [slot.slotId, slot]));
-  const heldItems = new Map(next.camp?.itemSlots.filter((slot) => slot.held && slot.offer).map((slot) => [slot.slotId, slot]));
+  const heldAnimal = new Map(next.camp?.animalSlots.flatMap((slot, index) => slot.held && slot.offer ? [[index, slot] as const] : []));
+  const heldItems = new Map(next.camp?.itemSlots.flatMap((slot, index) => slot.held && slot.offer ? [[index, slot] as const] : []));
   const supply = clamp(rules.baseSupply + Math.min(previousLeftover, rules.carrySupplyLimit), 0, rules.supplyCap);
   next.phase = "camp";
   next.camp = {
@@ -149,12 +149,12 @@ export function enterCamp(state: ExpeditionState, previousLeftover = 0): Expedit
     freeRefreshes: rules.freeRefreshes,
     animalSlots: Array.from({ length: 5 }, (_, index) => {
       const unlocked = index < rules.animalOfferSlots;
-      const old = heldAnimal.get(makeId("animal_slot", next.expeditionSeed + next.round - 1, index));
+      const old = heldAnimal.get(index);
       return old && unlocked ? { ...old, slotId: makeId("animal_slot", next.expeditionSeed + next.round, index) } : rollAnimalSlot(next.expeditionSeed, next.round, index, unlocked, rules);
     }),
     itemSlots: Array.from({ length: rules.itemOfferSlots }, (_, index) => {
-      const old = heldItems.get(makeId("item_slot", next.expeditionSeed + next.round - 1, index));
-      return old ?? rollItemSlot(next.expeditionSeed, next.round, index);
+      const old = heldItems.get(index);
+      return old ? { ...old, slotId: makeId("item_slot", next.expeditionSeed + next.round, index) } : rollItemSlot(next.expeditionSeed, next.round, index);
     }),
   };
   return next;
@@ -281,10 +281,14 @@ export function applyCampAction(state: ExpeditionState, action: CampAction): Dom
     const member = createMember(slot.offer.speciesId, next.expeditionSeed, next.round, allOwned(next).length + 1);
     if (action.type === "recruitToTeam") {
       if (teamOccupancy(next.team) >= 5) return { ok: false, state, messageZh: "战斗队已满。" };
-      insertOwned(next, "team", member);
+      if (action.targetIndex !== undefined && (action.targetIndex < 0 || action.targetIndex > 4)) return { ok: false, state, messageZh: "目标战斗位无效。" };
+      if (action.targetIndex !== undefined && next.team[action.targetIndex]) return { ok: false, state, messageZh: "目标战斗位已有动物。" };
+      insertOwned(next, "team", member, action.targetIndex);
     } else if (action.type === "recruitToReserve") {
       if (next.reserve.length >= rules.reserveCapacity) return { ok: false, state, messageZh: "替补区已满。" };
-      next.reserve.push(member);
+      if (action.targetIndex !== undefined && (action.targetIndex < 0 || action.targetIndex > rules.reserveCapacity - 1)) return { ok: false, state, messageZh: "目标替补位无效。" };
+      if (action.targetIndex !== undefined && next.reserve[action.targetIndex]) return { ok: false, state, messageZh: "目标替补位已有动物。" };
+      insertOwned(next, "reserve", member, action.targetIndex);
     } else {
       const target = findOwned(next, action.targetInstanceId);
       if (!target) return { ok: false, state, messageZh: "没有找到合成目标。" };
