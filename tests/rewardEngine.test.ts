@@ -4,6 +4,12 @@ import { createEmptySave } from "../src/domain/saveSchema";
 import { applyChallengeReward, applyRewardChoice, createRewardChoices } from "../src/domain/rewardEngine";
 import { battleInputForState } from "../src/sim/opponentGenerator";
 import { resolveBattle } from "../src/domain/battleEngine";
+import type { ExpeditionState, TeamMember } from "../src/domain/types";
+
+function place(state: ExpeditionState, member: TeamMember, slot = 0): void {
+  state.unitsById[member.instanceId] = member;
+  state.formation[slot as 0 | 1 | 2 | 3 | 4] = member.instanceId;
+}
 
 describe("rewards and final victory registration", () => {
   it("返程选择始终包含三类", () => {
@@ -21,7 +27,7 @@ describe("rewards and final victory registration", () => {
 
   it("登记队伍复制最终胜利战前快照", () => {
     const state = createExpedition(6);
-    state.team.push({ instanceId: "frog", speciesId: "frog", bondXp: 6, permanentAttackBonus: 1, permanentHealthBonus: 1, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 });
+    place(state, { instanceId: "frog", speciesId: "frog", bondXp: 6, permanentAttackBonus: 1, permanentHealthBonus: 1, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 });
     const input = battleInputForState(state);
     const output = resolveBattle(input);
     state.finalVictoryRecord = { battleId: input.battleId, input, output, playerPreBattleSnapshot: input.playerTeam };

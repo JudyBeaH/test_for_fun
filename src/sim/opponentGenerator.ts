@@ -1,7 +1,7 @@
 import { ANIMALS, ANIMAL_BY_ID } from "../content/animals";
 import { CONTENT_VERSION, ENGINE_VERSION } from "../content/constants";
 import { ENVIRONMENTS } from "../content/environments";
-import { campLevelForRound, createMember, toTeamSnapshot } from "../domain/campEngine";
+import { campLevelForRound, createMember, formationMembers, toTeamSnapshot } from "../domain/campEngine";
 import { makeId, makeTeamId } from "../domain/ids";
 import { createRng, shuffleDeterministic } from "../domain/rng";
 import type { BattleInput, EnvironmentId, ExpeditionState, SpeciesId, TeamMember } from "../domain/types";
@@ -67,7 +67,7 @@ export function battleInputForState(state: ExpeditionState): BattleInput {
   const opponent = generateOpponent(state);
   return {
     battleId: makeId("battle", state.expeditionSeed + state.round, state.badges),
-    playerTeam: toTeamSnapshot(state.team),
+    playerTeam: toTeamSnapshot(formationMembers(state)),
     opponentTeam: opponent.snapshot,
     environmentId: opponent.environmentId,
     seed: opponent.battleSeed,

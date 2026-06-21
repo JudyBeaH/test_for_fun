@@ -11,7 +11,7 @@ describe("soak and boundaries", () => {
     for (let i = 0; i < 1000; i += 1) {
       let state = createExpedition(1000 + i);
       state = runAutoCamp(state);
-      if (!state.team.length) continue;
+      if (!state.formation.some(Boolean)) continue;
       const output = resolveBattle(battleInputForState(state));
       expect(new Set(output.events.map((event) => event.sequence)).size).toBe(output.events.length);
       for (const unit of [...output.finalPlayerUnits, ...output.finalOpponentUnits]) {

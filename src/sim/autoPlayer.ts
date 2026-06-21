@@ -1,7 +1,7 @@
 import { ANIMAL_BY_ID } from "../content/animals";
 import { ITEM_BY_ID } from "../content/items";
-import { applyCampAction, computeCampRules, sortTeamHeuristic } from "../domain/campEngine";
-import type { ExpeditionState, SpeciesId, TeamMember } from "../domain/types";
+import { allOwnedMembers, applyCampCommand, computeCampRules, firstEmptyFormationSlot, firstEmptyInventorySlot, firstEmptyReserveSlot, formationMembers, inventoryItems, reserveMembers, sortTeamHeuristic } from "../domain/campEngine";
+import type { CampCommand, ExpeditionState, Fixed5, SpeciesId, TeamMember, UnitId } from "../domain/types";
 
 export interface AutoStats {
   invalidReasons: Record<string, number>;
@@ -14,11 +14,11 @@ export function createAutoStats(): AutoStats {
   return { invalidReasons: {}, campActions: 0, itemPurchases: {}, itemUses: {} };
 }
 
-function applyAuto(state: ExpeditionState, action: Parameters<typeof applyCampAction>[1], stats: AutoStats): ExpeditionState {
-  const result = applyCampAction(state, action);
+function applyAuto(state: ExpeditionState, command: CampCommand, stats: AutoStats): ExpeditionState {
+  const result = applyCampCommand(state, command);
   if (result.ok) {
     stats.campActions += 1;
-    return result.state;
+    return result.state.state;
   }
   stats.invalidReasons[result.messageZh] = (stats.invalidReasons[result.messageZh] ?? 0) + 1;
   return state;
@@ -40,8 +40,10 @@ export function runAutoCamp(state: ExpeditionState, stats: AutoStats = createAut
     }
     if (current.pendingRecruit) {
       const rules = computeCampRules(current);
-      if (presentMembers(current.team).length < 5) current = applyAuto(current, { type: "placePendingRecruit", area: "team" }, stats);
-      else if (current.reserve.length < rules.reserveCapacity) current = applyAuto(current, { type: "placePendingRecruit", area: "reserve" }, stats);
+      const formationSlot = firstEmptyFormationSlot(current);
+      const reserveSlot = firstEmptyReserveSlot(current);
+      if (formationSlot >= 0) current = applyAuto(current, { type: "placePendingRecruit", to: { zone: "formation", slot: formationSlot as 0 | 1 | 2 | 3 | 4 } }, stats);
+      else if (reserveSlot >= 0 && reserveSlot < rules.reserveCapacity) current = applyAuto(current, { type: "placePendingRecruit", to: { zone: "reserve", slot: reserveSlot as 0 | 1 | 2 } }, stats);
       else current = applyAuto(current, { type: "discardPendingRecruit" }, stats);
     }
   }
@@ -51,35 +53,39 @@ export function runAutoCamp(state: ExpeditionState, stats: AutoStats = createAut
     const rules = computeCampRules(current);
     const mergeable = findMergeable(current);
     if (mergeable) {
-      current = applyAuto(current, { type: "mergeOwned", sourceInstanceId: mergeable[0], targetInstanceId: mergeable[1] }, stats);
+      current = applyAuto(current, { type: "mergeUnits", sourceUnitId: mergeable[0], targetUnitId: mergeable[1] }, stats);
       continue;
     }
-    const bondNut = current.camp.itemSlots.find((slot) => slot.offer?.itemId === "bond_nut");
-    const nearLevel = [...presentMembers(current.team), ...current.reserve].find((member) => member.bondXp === 2 || member.bondXp === 5);
+    const bondNut = current.camp.itemOffers.find((slot) => slot.offer?.itemId === "bond_nut");
+    const nearLevel = allOwnedMembers(current).find((member) => member.bondXp === 2 || member.bondXp === 5);
     if (bondNut && nearLevel && current.camp.supply >= ITEM_BY_ID.bond_nut.price) {
-      current = applyAuto(current, { type: "buyAndUseItem", slotId: bondNut.slotId, targetInstanceIds: [nearLevel.instanceId] }, stats);
+      current = applyAuto(current, { type: "purchaseAndApplyItem", offerId: bondNut.offer!.offerInstanceId, target: { kind: "units", unitIds: [nearLevel.instanceId] } }, stats);
       stats.itemPurchases.bond_nut = (stats.itemPurchases.bond_nut ?? 0) + 1;
       stats.itemUses.bond_nut = (stats.itemUses.bond_nut ?? 0) + 1;
       continue;
     }
-    const usefulItem = current.camp.itemSlots.find((slot) => slot.offer && current.camp!.supply >= ITEM_BY_ID[slot.offer.itemId].price);
-    const target = presentMembers(current.team)[0] ?? current.reserve[0];
+    const usefulItem = current.camp.itemOffers.find((slot) => slot.offer && current.camp!.supply >= ITEM_BY_ID[slot.offer.itemId].price);
+    const target = presentMembers(formationMembers(current))[0] ?? presentMembers(reserveMembers(current))[0];
     if (usefulItem?.offer && target && ["red_berry", "melatonin", "pinecone_sling"].includes(usefulItem.offer.itemId)) {
-      if (usefulItem.offer.itemId === "pinecone_sling" && current.inventory.length < rules.inventoryCapacity) {
-        current = applyAuto(current, { type: "buyItemToInventory", slotId: usefulItem.slotId }, stats);
-        const item = current.inventory[current.inventory.length - 1];
-        if (item) current = applyAuto(current, { type: "equipInventoryItem", itemInstanceId: item.instanceId, targetInstanceId: target.instanceId }, stats);
+      const inventorySlot = firstEmptyInventorySlot(current);
+      if (usefulItem.offer.itemId === "pinecone_sling" && inventorySlot >= 0 && inventorySlot < rules.inventoryCapacity) {
+        current = applyAuto(current, { type: "purchaseItemToInventory", offerId: usefulItem.offer.offerInstanceId, to: { zone: "inventory", slot: inventorySlot as 0 | 1 | 2 } }, stats);
+        const item = inventoryItems(current)[inventorySlot];
+        if (item) current = applyAuto(current, { type: "applyInventoryItem", itemInstanceId: item.instanceId, target: { kind: "units", unitIds: [target.instanceId] } }, stats);
       } else {
-        current = applyAuto(current, { type: "buyAndUseItem", slotId: usefulItem.slotId, targetInstanceIds: [target.instanceId] }, stats);
+        current = applyAuto(current, { type: "purchaseAndApplyItem", offerId: usefulItem.offer.offerInstanceId, target: { kind: "units", unitIds: [target.instanceId] } }, stats);
       }
       stats.itemPurchases[usefulItem.offer.itemId] = (stats.itemPurchases[usefulItem.offer.itemId] ?? 0) + 1;
       stats.itemUses[usefulItem.offer.itemId] = (stats.itemUses[usefulItem.offer.itemId] ?? 0) + 1;
       continue;
     }
     if (current.camp.supply >= rules.recruitCost) {
-      const bestOffer = current.camp.animalSlots.filter((slot) => slot.offer).sort((a, b) => speciesValue(b.offer!.speciesId) - speciesValue(a.offer!.speciesId))[0];
+      const bestOffer = current.camp.animalOffers.filter((slot) => slot.offer).sort((a, b) => speciesValue(b.offer!.speciesId) - speciesValue(a.offer!.speciesId))[0];
       if (bestOffer) {
-        current = applyAuto(current, { type: presentMembers(current.team).length < 5 ? "recruitToTeam" : "recruitToReserve", slotId: bestOffer.slotId }, stats);
+        const formationSlot = firstEmptyFormationSlot(current);
+        const reserveSlot = firstEmptyReserveSlot(current);
+        const to = formationSlot >= 0 ? { zone: "formation" as const, slot: formationSlot as 0 | 1 | 2 | 3 | 4 } : reserveSlot >= 0 ? { zone: "reserve" as const, slot: reserveSlot as 0 | 1 | 2 } : null;
+        if (to) current = applyAuto(current, { type: "recruitAnimal", offerId: bestOffer.offer!.offerInstanceId, to }, stats);
         continue;
       }
     }
@@ -89,7 +95,8 @@ export function runAutoCamp(state: ExpeditionState, stats: AutoStats = createAut
     }
     break;
   }
-  current.team = sortTeamHeuristic(presentMembers(current.team));
+  const sorted = sortTeamHeuristic(presentMembers(formationMembers(current))).map((member) => member.instanceId);
+  current.formation = [sorted[0] ?? null, sorted[1] ?? null, sorted[2] ?? null, sorted[3] ?? null, sorted[4] ?? null] as Fixed5<UnitId | null>;
   return current;
 }
 
@@ -100,7 +107,7 @@ function speciesValue(speciesId: SpeciesId): number {
 }
 
 function findMergeable(state: ExpeditionState): [string, string] | null {
-  const owned = [...presentMembers(state.team), ...state.reserve];
+  const owned = allOwnedMembers(state);
   for (let i = 0; i < owned.length; i += 1) {
     for (let j = i + 1; j < owned.length; j += 1) {
       if (owned[i].speciesId === owned[j].speciesId && owned[i].bondXp < 6 && owned[j].bondXp < 6 && owned[i].bondXp + owned[j].bondXp <= 6) {

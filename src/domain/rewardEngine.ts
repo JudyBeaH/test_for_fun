@@ -1,14 +1,11 @@
 import { ANIMALS, ANIMAL_BY_ID } from "../content/animals";
-import type { AppSave, ExpeditionState, RewardChoice, TeamMember } from "./types";
+import type { AppSave, ExpeditionState, RewardChoice } from "./types";
 import { createRng } from "./rng";
-
-function presentMembers(members: readonly (TeamMember | null | undefined)[]): TeamMember[] {
-  return members.filter((member): member is TeamMember => Boolean(member));
-}
+import { allOwnedMembers } from "./campEngine";
 
 export function createRewardChoices(state: ExpeditionState, save: AppSave, seed: number): RewardChoice[] {
   const rng = createRng(seed ^ state.expeditionSeed ^ state.round);
-  const owned = [...presentMembers(state.team), ...state.reserve];
+  const owned = allOwnedMembers(state);
   const companion = owned.length > 0 ? rng.pick(owned).speciesId : "hedgehog";
   const unfinished = ANIMALS.map((animal) => animal.id).filter((id) => !save.collection[id].journalUnlocked);
   const trace = unfinished.length > 0 ? rng.pick(unfinished) : rng.pick(ANIMALS).id;

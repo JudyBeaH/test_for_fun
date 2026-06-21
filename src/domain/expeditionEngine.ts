@@ -2,7 +2,7 @@ import { CONTENT_VERSION, ENGINE_VERSION, INITIAL_EXPEDITION, REGION_ID, REGION_
 import { ANIMAL_BY_ID } from "../content/animals";
 import type { AppSave, DomainResult, ExpeditionState, RegisteredTeam, RewardChoice, SpeciesId, TeamMember } from "./types";
 import { makeRunId, makeTeamId } from "./ids";
-import { enterCamp, toTeamSnapshot } from "./campEngine";
+import { allOwnedMembers, emptyFormation, emptyInventory, emptyReserve, enterCamp, formationMembers, toTeamSnapshot } from "./campEngine";
 import { battleInputForState } from "../sim/opponentGenerator";
 import { resolveBattle } from "./battleEngine";
 import { applyRewardChoice, createRewardChoices } from "./rewardEngine";
@@ -20,9 +20,11 @@ export function createExpedition(seed: number): ExpeditionState {
     badges: INITIAL_EXPEDITION.badges,
     morale: INITIAL_EXPEDITION.morale,
     camp: null,
-    team: [],
-    reserve: [],
-    inventory: [],
+    unitsById: {},
+    itemsById: {},
+    formation: emptyFormation(),
+    reserve: emptyReserve(),
+    inventory: emptyInventory(),
     pendingRecruit: null,
     pendingDiscoveries: [],
     pendingBattle: null,
@@ -47,7 +49,7 @@ export function createExpedition(seed: number): ExpeditionState {
 export function canDepart(state: ExpeditionState): { ok: boolean; messageZh: string } {
   if (state.phase !== "camp") return { ok: false, messageZh: "请先完成当前营地事务。" };
   if (state.pendingDiscoveries.length > 0 || state.pendingRecruit) return { ok: false, messageZh: "请先完成高级发现。" };
-  if (!state.team.some(Boolean)) return { ok: false, messageZh: "至少 1 只战斗队动物才能出发。" };
+  if (!state.formation.some(Boolean)) return { ok: false, messageZh: "至少 1 只战斗队动物才能出发。" };
   return { ok: true, messageZh: "可以出发。" };
 }
 
@@ -91,7 +93,7 @@ export function settleResolvedBattle(state: ExpeditionState): DomainResult<Exped
   } else {
     next.stats.battlesDrawn += 1;
   }
-  for (const member of presentMembers(next.team)) {
+  for (const member of presentMembers(formationMembers(next))) {
     member.participatedRounds += 1;
     next.stats.animalRounds[member.speciesId] = (next.stats.animalRounds[member.speciesId] ?? 0) + 1;
     member.timedStatuses = member.timedStatuses.filter((status) => {
@@ -255,16 +257,16 @@ export function applyAdoption(save: AppSave, speciesId: SpeciesId): AppSave {
 }
 
 export function teamSummary(state: ExpeditionState): string {
-  return presentMembers(state.team).map((member) => `${ANIMAL_BY_ID[member.speciesId].nameZh} L${member.bondXp >= 6 ? 3 : member.bondXp >= 3 ? 2 : 1}`).join(" / ") || "暂无队伍";
+  return presentMembers(formationMembers(state)).map((member) => `${ANIMAL_BY_ID[member.speciesId].nameZh} L${member.bondXp >= 6 ? 3 : member.bondXp >= 3 ? 2 : 1}`).join(" / ") || "暂无队伍";
 }
 
 export function cloneExpeditionWithSeen(save: AppSave, state: ExpeditionState): AppSave {
   const next = structuredClone(save) as AppSave;
-  for (const member of [...presentMembers(state.team), ...state.reserve]) next.collection[member.speciesId].seen = true;
-  for (const slot of state.camp?.animalSlots ?? []) if (slot.offer) next.collection[slot.offer.speciesId].seen = true;
+  for (const member of allOwnedMembers(state)) next.collection[member.speciesId].seen = true;
+  for (const slot of state.camp?.animalOffers ?? []) if (slot.offer) next.collection[slot.offer.speciesId].seen = true;
   return next;
 }
 
 export function snapshotForCurrentTeam(state: ExpeditionState) {
-  return toTeamSnapshot(state.team);
+  return toTeamSnapshot(formationMembers(state));
 }

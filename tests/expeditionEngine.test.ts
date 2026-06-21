@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createEmptySave, validateSave } from "../src/domain/saveSchema";
+import { createEmptySave, migrateSave, validateSave } from "../src/domain/saveSchema";
 import { commitTransactional, loadTransactional, type StorageLike } from "../src/storage/transactionalSave";
 import { completeSuccessResolution, createExpedition, finishBattleReport, prepareBattle, resolvePreparedBattle } from "../src/domain/expeditionEngine";
 import { createRewardChoices } from "../src/domain/rewardEngine";
+import type { ExpeditionState, TeamMember } from "../src/domain/types";
 
 function memoryStorage(seed: Record<string, string> = {}): StorageLike & { data: Record<string, string> } {
   return {
@@ -11,6 +12,11 @@ function memoryStorage(seed: Record<string, string> = {}): StorageLike & { data:
     setItem(key: string, value: string) { this.data[key] = value; },
     removeItem(key: string) { delete this.data[key]; },
   };
+}
+
+function place(state: ExpeditionState, member: TeamMember, slot = 0): void {
+  state.unitsById[member.instanceId] = member;
+  state.formation[slot as 0 | 1 | 2 | 3 | 4] = member.instanceId;
 }
 
 describe("save schema and battle resume", () => {
@@ -28,9 +34,38 @@ describe("save schema and battle resume", () => {
     expect(loadTransactional(storage).saveRevision).toBe(2);
   });
 
+  it("v2 dense expedition save migrates to v3 fixed slots", () => {
+    const legacy = createEmptySave() as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 2;
+    legacy.activeExpedition = {
+      ...createExpedition(77),
+      team: [
+        { instanceId: "t1", speciesId: "frog", bondXp: 1, permanentAttackBonus: 0, permanentHealthBonus: 0, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 },
+        null,
+        { instanceId: "t3", speciesId: "hare", bondXp: 1, permanentAttackBonus: 0, permanentHealthBonus: 0, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 },
+      ],
+      reserve: [
+        { instanceId: "r1", speciesId: "crow", bondXp: 1, permanentAttackBonus: 0, permanentHealthBonus: 0, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 },
+      ],
+      inventory: [{ instanceId: "i1", itemId: "pinecone_sling" }],
+      unitsById: undefined,
+      itemsById: undefined,
+      formation: undefined,
+    };
+
+    const migrated = migrateSave(legacy);
+
+    expect(migrated?.schemaVersion).toBe(3);
+    expect(migrated?.activeExpedition?.formation).toEqual(["t1", null, "t3", null, null]);
+    expect(migrated?.activeExpedition?.reserve).toEqual(["r1", null, null]);
+    expect(migrated?.activeExpedition?.inventory).toEqual(["i1", null, null]);
+    expect(migrated?.activeExpedition?.unitsById.t1.speciesId).toBe("frog");
+    expect(migrated?.activeExpedition?.itemsById.i1.itemId).toBe("pinecone_sling");
+  });
+
   it("prepared 战斗恢复后同一结果，已结算不重复加章", () => {
     const state = createExpedition(99);
-    state.team.push({ instanceId: "frog", speciesId: "frog", bondXp: 1, permanentAttackBonus: 20, permanentHealthBonus: 20, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 });
+    place(state, { instanceId: "frog", speciesId: "frog", bondXp: 1, permanentAttackBonus: 20, permanentHealthBonus: 20, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 });
     const prepared = prepareBattle(state).state;
     const first = resolvePreparedBattle(prepared).state;
     const badges = first.badges;
@@ -42,9 +77,7 @@ describe("save schema and battle resume", () => {
   it("9 胜到 10 胜后进入成功结算并完成冠军登记", () => {
     const state = createExpedition(20260620);
     state.badges = 9;
-    state.team = [
-      { instanceId: "closer", speciesId: "weasel", bondXp: 6, permanentAttackBonus: 100, permanentHealthBonus: 100, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 },
-    ];
+    place(state, { instanceId: "closer", speciesId: "weasel", bondXp: 6, permanentAttackBonus: 100, permanentHealthBonus: 100, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 });
 
     const prepared = prepareBattle(state).state;
     const settled = resolvePreparedBattle(prepared).state;

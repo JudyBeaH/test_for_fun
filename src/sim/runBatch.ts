@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { createExpedition, finishBattleReport, prepareBattle, resolvePreparedBattle } from "../domain/expeditionEngine";
 import { createEmptySave } from "../domain/saveSchema";
 import { createRewardChoices } from "../domain/rewardEngine";
-import { levelFromBondXp } from "../domain/campEngine";
+import { allOwnedMembers, formationMembers, levelFromBondXp, reserveMembers } from "../domain/campEngine";
 import type { TeamMember } from "../domain/types";
 import { createAccumulator, type SimReport } from "./report";
 import { createAutoStats, runAutoCamp } from "./autoPlayer";
@@ -29,11 +29,11 @@ export function runBatch(runs: number, seed: number): SimReport {
     const battlesWithSpecies = new Map<string, number>();
     const autoStats = createAutoStats();
     while (!["successResolution", "returnResolution", "completed"].includes(expedition.phase) && expedition.round < 40) {
-      for (const slot of expedition.camp?.animalSlots ?? []) if (slot.offer) seenThisRun.add(slot.offer.speciesId);
-      for (const slot of expedition.camp?.itemSlots ?? []) if (slot.offer) report.items[slot.offer.itemId].appearanceRate += 1;
+      for (const slot of expedition.camp?.animalOffers ?? []) if (slot.offer) seenThisRun.add(slot.offer.speciesId);
+      for (const slot of expedition.camp?.itemOffers ?? []) if (slot.offer) report.items[slot.offer.itemId].appearanceRate += 1;
       expedition = runAutoCamp(expedition, autoStats);
-      for (const member of presentMembers(expedition.team)) recruitedThisRun.add(member.speciesId);
-      for (const member of expedition.reserve) reserveThisRun.add(member.speciesId);
+      for (const member of presentMembers(formationMembers(expedition))) recruitedThisRun.add(member.speciesId);
+      for (const member of presentMembers(reserveMembers(expedition))) reserveThisRun.add(member.speciesId);
       const prepared = prepareBattle(expedition);
       if (!prepared.ok) break;
       const resolved = resolvePreparedBattle(prepared.state);
@@ -52,7 +52,7 @@ export function runBatch(runs: number, seed: number): SimReport {
         if (event.messageZh.includes("褪黑素效果解除")) report.melatonin.wakes += 1;
         if (event.messageZh.includes("强化攻击")) report.melatonin.empoweredHits += 1;
       }
-      for (const member of presentMembers(expedition.team)) {
+      for (const member of presentMembers(formationMembers(expedition))) {
         battlesWithSpecies.set(member.speciesId, (battlesWithSpecies.get(member.speciesId) ?? 0) + 1);
         if (battle.result === "win") winsWithSpecies.set(member.speciesId, (winsWithSpecies.get(member.speciesId) ?? 0) + 1);
       }
@@ -78,7 +78,7 @@ export function runBatch(runs: number, seed: number): SimReport {
       if (seenThisRun.has(species)) report.species[species].seenRate += 1;
       if (recruitedThisRun.has(species)) report.species[species].recruitRate += 1;
       if (reserveThisRun.has(species)) report.species[species].reserveRate += 1;
-      const final = [...presentMembers(expedition.team), ...expedition.reserve].find((member) => member.speciesId === species);
+      const final = allOwnedMembers(expedition).find((member) => member.speciesId === species);
       if (final) report.species[species].averageFinalLevel += levelFromBondXp(final.bondXp);
       report.species[species].averageContribution += expedition.stats.animalContribution[species] ?? 0;
       const battles = battlesWithSpecies.get(species) ?? 0;

@@ -1,4 +1,4 @@
-import { createEmptySave, validateSave } from "../domain/saveSchema";
+import { createEmptySave, migrateSave } from "../domain/saveSchema";
 import type { AppSave } from "../domain/types";
 import { BACKUP_KEY, commitTransactional, loadTransactional, SAVE_KEY, STAGING_KEY } from "./transactionalSave";
 
@@ -17,8 +17,9 @@ export function exportSave(save: AppSave): string {
 export function importSaveJson(json: string): { ok: boolean; save: AppSave; messageZh: string } {
   try {
     const parsed = JSON.parse(json) as unknown;
-    if (!validateSave(parsed)) return { ok: false, save: createEmptySave(), messageZh: "导入内容不是 v0.2 有效存档。" };
-    return { ok: true, save: parsed, messageZh: "存档已导入，保存前请确认摘要。" };
+    const save = migrateSave(parsed);
+    if (!save) return { ok: false, save: createEmptySave(), messageZh: "导入内容不是有效存档。" };
+    return { ok: true, save, messageZh: "存档已导入，保存前请确认摘要。" };
   } catch {
     return { ok: false, save: createEmptySave(), messageZh: "JSON 无法解析。" };
   }

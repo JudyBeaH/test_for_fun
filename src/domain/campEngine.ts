@@ -4,18 +4,28 @@ import { DEFAULT_CAMP_ECONOMY } from "../content/constants";
 import { ITEMS, ITEM_BY_ID } from "../content/items";
 import type {
   AnimalOffer,
-  CampAction,
+  CampCommand,
   CampModifier,
+  CampTransition,
   ComputedCampRules,
   DomainResult,
   ExpeditionState,
+  Fixed2,
+  Fixed3,
+  Fixed5,
   Habitat,
+  ItemInstance,
+  ItemInstanceId,
   ItemOffer,
+  ItemSlotRef,
+  OfferId,
   OfferSlot,
   SpeciesId,
   TeamMember,
   TeamSnapshot,
   TeamSnapshotUnit,
+  UnitId,
+  UnitSlotRef,
   UpgradeDiscovery,
 } from "./types";
 import { makeId } from "./ids";
@@ -29,6 +39,26 @@ export function levelFromBondXp(bondXp: number): 1 | 2 | 3 {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+export function emptyFormation(): Fixed5<UnitId | null> {
+  return [null, null, null, null, null];
+}
+
+export function emptyReserve(): Fixed3<UnitId | null> {
+  return [null, null, null];
+}
+
+export function emptyInventory(): Fixed3<ItemInstanceId | null> {
+  return [null, null, null];
+}
+
+function fixed5<T>(items: readonly T[], fallback: T): Fixed5<T> {
+  return [items[0] ?? fallback, items[1] ?? fallback, items[2] ?? fallback, items[3] ?? fallback, items[4] ?? fallback];
+}
+
+function fixed2<T>(items: readonly T[], fallback: T): Fixed2<T> {
+  return [items[0] ?? fallback, items[1] ?? fallback];
 }
 
 export function memberLevel(member: TeamMember): 1 | 2 | 3 {
@@ -47,6 +77,26 @@ export function createMember(speciesId: SpeciesId, seed: number, round: number, 
     acquiredAtRound: round,
     participatedRounds: 0,
   };
+}
+
+export function formationMembers(state: ExpeditionState): Array<TeamMember | null> {
+  return state.formation.map((unitId) => unitId ? state.unitsById[unitId] ?? null : null);
+}
+
+export function reserveMembers(state: ExpeditionState): Array<TeamMember | null> {
+  return state.reserve.map((unitId) => unitId ? state.unitsById[unitId] ?? null : null);
+}
+
+export function inventoryItems(state: ExpeditionState): Array<ItemInstance | null> {
+  return state.inventory.map((itemId) => itemId ? state.itemsById[itemId] ?? null : null);
+}
+
+export function presentMembers(members: readonly (TeamMember | null | undefined)[]): TeamMember[] {
+  return members.filter((member): member is TeamMember => Boolean(member));
+}
+
+export function allOwnedMembers(state: ExpeditionState): TeamMember[] {
+  return [...presentMembers(formationMembers(state)), ...presentMembers(reserveMembers(state))];
 }
 
 export function campLevelForRound(round: number): 1 | 2 | 3 {
@@ -72,7 +122,7 @@ export function computeCampRules(state: ExpeditionState, extraModifiers: readonl
     reserveCapacity: DEFAULT_CAMP_ECONOMY.reserveCapacity,
     inventoryCapacity: DEFAULT_CAMP_ECONOMY.inventoryCapacity,
   };
-  const modifiers = [...teamMembers(state.team).flatMap((member) => ANIMAL_BY_ID[member.speciesId].campModifiers ?? []), ...extraModifiers];
+  const modifiers = [...presentMembers(formationMembers(state)).flatMap((member) => ANIMAL_BY_ID[member.speciesId].campModifiers ?? []), ...extraModifiers];
   for (const modifier of modifiers) applyCampModifier(rules, modifier);
   rules.refreshCost = Math.max(0, rules.refreshCost);
   rules.baseSupply = Math.max(0, rules.baseSupply);
@@ -138,8 +188,8 @@ function rollItemSlot(seed: number, round: number, index: number): OfferSlot<Ite
 export function enterCamp(state: ExpeditionState, previousLeftover = 0): ExpeditionState {
   const next = structuredClone(state) as ExpeditionState;
   const rules = computeCampRules(next);
-  const heldAnimal = new Map(next.camp?.animalSlots.flatMap((slot, index) => slot.held && slot.offer ? [[index, slot] as const] : []));
-  const heldItems = new Map(next.camp?.itemSlots.flatMap((slot, index) => slot.held && slot.offer ? [[index, slot] as const] : []));
+  const heldAnimal = new Map(next.camp?.animalOffers.flatMap((slot, index) => slot.held && slot.offer ? [[index, slot] as const] : []));
+  const heldItems = new Map(next.camp?.itemOffers.flatMap((slot, index) => slot.held && slot.offer ? [[index, slot] as const] : []));
   const supply = clamp(rules.baseSupply + Math.min(previousLeftover, rules.carrySupplyLimit), 0, rules.supplyCap);
   next.phase = "camp";
   next.camp = {
@@ -147,80 +197,96 @@ export function enterCamp(state: ExpeditionState, previousLeftover = 0): Expedit
     campLevel: rules.campLevel,
     supply,
     freeRefreshes: rules.freeRefreshes,
-    animalSlots: Array.from({ length: 5 }, (_, index) => {
+    animalOffers: fixed5(Array.from({ length: 5 }, (_, index) => {
       const unlocked = index < rules.animalOfferSlots;
       const old = heldAnimal.get(index);
       return old && unlocked ? { ...old, slotId: makeId("animal_slot", next.expeditionSeed + next.round, index) } : rollAnimalSlot(next.expeditionSeed, next.round, index, unlocked, rules);
-    }),
-    itemSlots: Array.from({ length: rules.itemOfferSlots }, (_, index) => {
+    }), rollAnimalSlot(next.expeditionSeed, next.round, 0, false, rules)),
+    itemOffers: fixed2(Array.from({ length: 2 }, (_, index) => {
       const old = heldItems.get(index);
-      return old ? { ...old, slotId: makeId("item_slot", next.expeditionSeed + next.round, index) } : rollItemSlot(next.expeditionSeed, next.round, index);
-    }),
+      return index < rules.itemOfferSlots ? old ? { ...old, slotId: makeId("item_slot", next.expeditionSeed + next.round, index) } : rollItemSlot(next.expeditionSeed, next.round, index) : { ...rollItemSlot(next.expeditionSeed, next.round, index), unlocked: false, offer: null };
+    }), { ...rollItemSlot(next.expeditionSeed, next.round, 0), unlocked: false, offer: null }),
   };
   return next;
 }
 
-function isMember(member: TeamMember | null | undefined): member is TeamMember {
-  return Boolean(member);
+export function firstEmptyFormationSlot(state: ExpeditionState): 0 | 1 | 2 | 3 | 4 | -1 {
+  const index = state.formation.findIndex((unitId) => !unitId);
+  return index === -1 ? -1 : index as 0 | 1 | 2 | 3 | 4;
 }
 
-function teamMembers(team: readonly (TeamMember | null | undefined)[]): TeamMember[] {
-  return team.filter(isMember);
+export function firstEmptyReserveSlot(state: ExpeditionState): 0 | 1 | 2 | -1 {
+  const index = state.reserve.findIndex((unitId) => !unitId);
+  return index === -1 ? -1 : index as 0 | 1 | 2;
 }
 
-function teamOccupancy(team: readonly (TeamMember | null | undefined)[]): number {
-  return teamMembers(team).length;
+export function firstEmptyInventorySlot(state: ExpeditionState): 0 | 1 | 2 | -1 {
+  const index = state.inventory.findIndex((itemId) => !itemId);
+  return index === -1 ? -1 : index as 0 | 1 | 2;
 }
 
-function firstOpenTeamSlot(team: readonly (TeamMember | null | undefined)[]): number {
-  for (let index = 0; index < 5; index += 1) {
-    if (!team[index]) return index;
-  }
-  return -1;
+function getUnitSlotArray(state: ExpeditionState, zone: UnitSlotRef["zone"]): Fixed5<UnitId | null> | Fixed3<UnitId | null> {
+  return zone === "formation" ? state.formation : state.reserve;
 }
 
-function setTeamSlot(team: Array<TeamMember | null>, index: number, member: TeamMember | null): void {
-  for (let i = 0; i < index; i += 1) {
-    if (!(i in team)) team[i] = null;
-  }
-  team[index] = member;
-}
-
-function allOwned(state: ExpeditionState): TeamMember[] {
-  return [...teamMembers(state.team), ...state.reserve];
-}
-
-function hasDuplicateOwnedIds(state: ExpeditionState): boolean {
-  const ids = allOwned(state).map((member) => member.instanceId);
-  return new Set(ids).size !== ids.length;
-}
-
-function findOwned(state: ExpeditionState, instanceId: string): { member: TeamMember; area: "team" | "reserve"; index: number } | undefined {
-  const ti = state.team.findIndex((member) => member?.instanceId === instanceId);
-  if (ti >= 0 && state.team[ti]) return { member: state.team[ti], area: "team", index: ti };
-  const ri = state.reserve.findIndex((member) => member.instanceId === instanceId);
-  if (ri >= 0) return { member: state.reserve[ri], area: "reserve", index: ri };
+function findUnitSlot(state: ExpeditionState, unitId: UnitId): UnitSlotRef | undefined {
+  const formationSlot = state.formation.findIndex((id) => id === unitId);
+  if (formationSlot >= 0) return { zone: "formation", slot: formationSlot as UnitSlotRef["slot"] };
+  const reserveSlot = state.reserve.findIndex((id) => id === unitId);
+  if (reserveSlot >= 0) return { zone: "reserve", slot: reserveSlot as 0 | 1 | 2 };
   return undefined;
 }
 
-function removeOwned(state: ExpeditionState, area: "team" | "reserve", index: number): TeamMember {
-  if (area === "team") {
-    const member = state.team[index];
-    if (!member) throw new Error("invalid team slot removal");
-    setTeamSlot(state.team, index, null);
-    return member;
-  }
-  return state.reserve.splice(index, 1)[0];
+function findItemSlot(state: ExpeditionState, itemInstanceId: ItemInstanceId): ItemSlotRef | undefined {
+  const slot = state.inventory.findIndex((id) => id === itemInstanceId);
+  return slot >= 0 ? { zone: "inventory", slot: slot as 0 | 1 | 2 } : undefined;
 }
 
-function insertOwned(state: ExpeditionState, area: "team" | "reserve", member: TeamMember, index?: number): void {
-  if (area === "team") {
-    const slot = index ?? firstOpenTeamSlot(state.team);
-    if (slot < 0 || slot > 4) return;
-    setTeamSlot(state.team, slot, member);
-    return;
+function unitAt(state: ExpeditionState, ref: UnitSlotRef): UnitId | null {
+  return getUnitSlotArray(state, ref.zone)[ref.slot] ?? null;
+}
+
+function setUnitAt(state: ExpeditionState, ref: UnitSlotRef, unitId: UnitId | null): void {
+  if (ref.zone === "formation") state.formation[ref.slot as 0 | 1 | 2 | 3 | 4] = unitId;
+  else state.reserve[ref.slot as 0 | 1 | 2] = unitId;
+}
+
+function setItemAt(state: ExpeditionState, ref: ItemSlotRef, itemId: ItemInstanceId | null): void {
+  state.inventory[ref.slot] = itemId;
+}
+
+function addInventoryItemToFirstEmptySlot(state: ExpeditionState, item: ItemInstance): boolean {
+  const slot = firstEmptyInventorySlot(state);
+  if (slot < 0) return false;
+  state.itemsById[item.instanceId] = item;
+  state.inventory[slot as 0 | 1 | 2] = item.instanceId;
+  return true;
+}
+
+function nextItemInstanceId(state: ExpeditionState): ItemInstanceId {
+  let index = Object.keys(state.itemsById).length + 1;
+  let id = makeId("item", state.expeditionSeed + state.round, index);
+  while (state.itemsById[id]) {
+    index += 1;
+    id = makeId("item", state.expeditionSeed + state.round, index);
   }
-  state.reserve.splice(index ?? state.reserve.length, 0, member);
+  return id;
+}
+
+function getOwnedUnit(state: ExpeditionState, unitId: UnitId): TeamMember | undefined {
+  return findUnitSlot(state, unitId) ? state.unitsById[unitId] : undefined;
+}
+
+function removeUnitFromSlot(state: ExpeditionState, unitId: UnitId): UnitSlotRef {
+  const slot = findUnitSlot(state, unitId);
+  if (!slot) throw new Error("unit slot missing");
+  setUnitAt(state, slot, null);
+  return slot;
+}
+
+function insertUnit(state: ExpeditionState, unit: TeamMember, to: UnitSlotRef): void {
+  state.unitsById[unit.instanceId] = unit;
+  setUnitAt(state, to, unit.instanceId);
 }
 
 function generateDiscoveries(state: ExpeditionState, source: TeamMember, beforeLevel: 1 | 2 | 3, afterLevel: 1 | 2 | 3): UpgradeDiscovery[] {
@@ -246,210 +312,262 @@ function clearOffer(slot: OfferSlot<AnimalOffer | ItemOffer>): void {
   slot.held = false;
 }
 
-export function applyCampAction(state: ExpeditionState, action: CampAction): DomainResult<ExpeditionState> {
-  const next = structuredClone(state) as ExpeditionState;
-  const rules = computeCampRules(next);
-  const upgradeDiscoveryActions = new Set<CampAction["type"]>(["chooseDiscovery", "placePendingRecruit", "discardPendingRecruit", "release"]);
-  if (next.phase !== "camp" && (next.phase !== "upgradeDiscovery" || !upgradeDiscoveryActions.has(action.type))) return { ok: false, state, messageZh: "当前阶段不能执行营地操作。" };
-  if (!next.camp && action.type !== "placePendingRecruit" && action.type !== "discardPendingRecruit") return { ok: false, state, messageZh: "尚未进入营地。" };
-  const camp = next.camp;
-  if (action.type === "toggleHold") {
-    const slots = action.slotKind === "animal" ? camp?.animalSlots : camp?.itemSlots;
-    const slot = slots?.find((item) => item.slotId === action.slotId);
-    if (!slot || !slot.unlocked || !slot.offer) return { ok: false, state, messageZh: "空格或未开放格不能留意。" };
-    slot.held = !slot.held;
-    return { ok: true, state: next, messageZh: slot.held ? "已留意。" : "已取消留意。" };
+function slotKey(ref: UnitSlotRef): string {
+  return `${ref.zone}:${ref.slot}`;
+}
+
+function itemSlotKey(ref: ItemSlotRef): string {
+  return `${ref.zone}:${ref.slot}`;
+}
+
+export function assertCampInvariants(state: ExpeditionState): void {
+  if (state.formation.length !== 5) throw new Error("formation must have exactly 5 slots");
+  if (state.reserve.length !== 3) throw new Error("reserve must have exactly 3 slots");
+  if (state.inventory.length !== 3) throw new Error("inventory must have exactly 3 slots");
+  if (state.camp) {
+    if (state.camp.animalOffers.length !== 5) throw new Error("animal offers must have exactly 5 slots");
+    if (state.camp.itemOffers.length !== 2) throw new Error("item offers must have exactly 2 slots");
   }
-  if (action.type === "refresh") {
-    if (!camp) return { ok: false, state, messageZh: "没有营地可刷新。" };
-    const refreshable = [...camp.animalSlots, ...camp.itemSlots].some((slot) => slot.unlocked && !slot.held);
-    if (!refreshable) return { ok: false, state, messageZh: "所有开放格都已留意，无法刷新。" };
+
+  const unitSlotById = new Map<UnitId, string>();
+  for (const [index, unitId] of state.formation.entries()) {
+    if (!unitId) continue;
+    if (!state.unitsById[unitId]) throw new Error(`formation has dangling unit ${unitId}`);
+    if (unitSlotById.has(unitId)) throw new Error(`unit ${unitId} occupies multiple slots`);
+    unitSlotById.set(unitId, slotKey({ zone: "formation", slot: index as 0 | 1 | 2 | 3 | 4 }));
+  }
+  for (const [index, unitId] of state.reserve.entries()) {
+    if (!unitId) continue;
+    if (!state.unitsById[unitId]) throw new Error(`reserve has dangling unit ${unitId}`);
+    if (unitSlotById.has(unitId)) throw new Error(`unit ${unitId} occupies multiple slots`);
+    unitSlotById.set(unitId, slotKey({ zone: "reserve", slot: index as 0 | 1 | 2 }));
+  }
+  for (const unitId of Object.keys(state.unitsById)) {
+    if (!unitSlotById.has(unitId)) throw new Error(`unit ${unitId} has no slot`);
+    if (state.unitsById[unitId].instanceId !== unitId) throw new Error(`unit ${unitId} id mismatch`);
+  }
+
+  const itemSlotById = new Map<ItemInstanceId, string>();
+  for (const [index, itemId] of state.inventory.entries()) {
+    if (!itemId) continue;
+    if (!state.itemsById[itemId]) throw new Error(`inventory has dangling item ${itemId}`);
+    if (itemSlotById.has(itemId)) throw new Error(`item ${itemId} occupies multiple slots`);
+    itemSlotById.set(itemId, itemSlotKey({ zone: "inventory", slot: index as 0 | 1 | 2 }));
+  }
+  for (const itemId of Object.keys(state.itemsById)) {
+    if (!itemSlotById.has(itemId)) throw new Error(`item ${itemId} has no slot`);
+    if (state.itemsById[itemId].instanceId !== itemId) throw new Error(`item ${itemId} id mismatch`);
+  }
+
+  const offerIds = new Set<OfferId>();
+  for (const slot of state.camp?.animalOffers ?? []) {
+    if (!slot.unlocked && slot.offer) throw new Error("locked animal offer slot has offer");
+    if (!slot.offer) continue;
+    if (offerIds.has(slot.offer.offerInstanceId)) throw new Error(`duplicate offer ${slot.offer.offerInstanceId}`);
+    offerIds.add(slot.offer.offerInstanceId);
+  }
+  for (const slot of state.camp?.itemOffers ?? []) {
+    if (!slot.unlocked && slot.offer) throw new Error("locked item offer slot has offer");
+    if (!slot.offer) continue;
+    if (offerIds.has(slot.offer.offerInstanceId)) throw new Error(`duplicate offer ${slot.offer.offerInstanceId}`);
+    offerIds.add(slot.offer.offerInstanceId);
+  }
+}
+
+function findAnimalOfferSlot(state: ExpeditionState, offerId: OfferId): OfferSlot<AnimalOffer> | undefined {
+  return state.camp?.animalOffers.find((slot) => slot.offer?.offerInstanceId === offerId || slot.slotId === offerId);
+}
+
+function findItemOfferSlot(state: ExpeditionState, offerId: OfferId): OfferSlot<ItemOffer> | undefined {
+  return state.camp?.itemOffers.find((slot) => slot.offer?.offerInstanceId === offerId || slot.slotId === offerId);
+}
+
+function validateUnitSlot(ref: UnitSlotRef, rules: ComputedCampRules): string | null {
+  if (ref.zone === "formation" && (ref.slot < 0 || ref.slot > 4)) return "目标战斗位无效。";
+  if (ref.zone === "reserve" && (ref.slot < 0 || ref.slot > rules.reserveCapacity - 1)) return `替补区最多 ${rules.reserveCapacity} 只。`;
+  return null;
+}
+
+function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand): string {
+  const rules = computeCampRules(next);
+  const camp = next.camp;
+  const upgradeDiscoveryCommands = new Set<CampCommand["type"]>(["chooseDiscovery", "placePendingRecruit", "discardPendingRecruit", "releaseUnit"]);
+  if (next.phase !== "camp" && (next.phase !== "upgradeDiscovery" || !upgradeDiscoveryCommands.has(command.type))) throw new Error("当前阶段不能执行营地操作。");
+  if (!camp && command.type !== "placePendingRecruit" && command.type !== "discardPendingRecruit") throw new Error("尚未进入营地。");
+
+  if (command.type === "toggleHold") {
+    const slot = command.slotKind === "animal" ? findAnimalOfferSlot(next, command.offerId) : findItemOfferSlot(next, command.offerId);
+    if (!slot || !slot.unlocked || !slot.offer) throw new Error("空格或未开放格不能留意。");
+    slot.held = !slot.held;
+    return slot.held ? "已留意。" : "已取消留意。";
+  }
+
+  if (command.type === "refresh") {
+    if (!camp) throw new Error("没有营地可刷新。");
+    const refreshable = [...camp.animalOffers, ...camp.itemOffers].some((slot) => slot.unlocked && !slot.held);
+    if (!refreshable) throw new Error("所有开放格都已留意，无法刷新。");
     if (camp.freeRefreshes > 0) camp.freeRefreshes -= 1;
     else {
-      if (camp.supply < rules.refreshCost) return { ok: false, state, messageZh: "补给不足，无法刷新。" };
+      if (camp.supply < rules.refreshCost) throw new Error("补给不足，无法刷新。");
       camp.supply -= rules.refreshCost;
     }
-    camp.animalSlots = camp.animalSlots.map((slot, index) => slot.unlocked && !slot.held ? rollAnimalSlot(next.expeditionSeed + camp.supply, next.round, index, slot.unlocked, rules) : slot);
-    camp.itemSlots = camp.itemSlots.map((slot, index) => slot.unlocked && !slot.held ? rollItemSlot(next.expeditionSeed + camp.supply, next.round, index) : slot);
-    return { ok: true, state: next, messageZh: "市场已刷新。" };
+    camp.animalOffers = fixed5(camp.animalOffers.map((slot, index) => slot.unlocked && !slot.held ? rollAnimalSlot(next.expeditionSeed + camp.supply, next.round, index, slot.unlocked, rules) : slot), camp.animalOffers[0]);
+    camp.itemOffers = fixed2(camp.itemOffers.map((slot, index) => slot.unlocked && !slot.held ? rollItemSlot(next.expeditionSeed + camp.supply, next.round, index) : slot), camp.itemOffers[0]);
+    return "市场已刷新。";
   }
-  if (action.type === "recruitToTeam" || action.type === "recruitToReserve" || action.type === "recruitMerge") {
-    if (!camp) return { ok: false, state, messageZh: "没有营地可招募。" };
-    if (camp.supply < rules.recruitCost) return { ok: false, state, messageZh: "补给不足，无法招募。" };
-    const slot = camp.animalSlots.find((item) => item.slotId === action.slotId);
-    if (!slot?.offer || !slot.unlocked) return { ok: false, state, messageZh: "这个动物位没有可招募动物。" };
-    const member = createMember(slot.offer.speciesId, next.expeditionSeed, next.round, allOwned(next).length + 1);
-    if (action.type === "recruitToTeam") {
-      if (teamOccupancy(next.team) >= 5) return { ok: false, state, messageZh: "战斗队已满。" };
-      if (action.targetIndex !== undefined && (action.targetIndex < 0 || action.targetIndex > 4)) return { ok: false, state, messageZh: "目标战斗位无效。" };
-      if (action.targetIndex !== undefined && next.team[action.targetIndex]) return { ok: false, state, messageZh: "目标战斗位已有动物。" };
-      insertOwned(next, "team", member, action.targetIndex);
-    } else if (action.type === "recruitToReserve") {
-      if (next.reserve.length >= rules.reserveCapacity) return { ok: false, state, messageZh: "替补区已满。" };
-      if (action.targetIndex !== undefined && (action.targetIndex < 0 || action.targetIndex > rules.reserveCapacity - 1)) return { ok: false, state, messageZh: "目标替补位无效。" };
-      if (action.targetIndex !== undefined && next.reserve[action.targetIndex]) return { ok: false, state, messageZh: "目标替补位已有动物。" };
-      insertOwned(next, "reserve", member, action.targetIndex);
+
+  if (command.type === "moveUnit") {
+    const invalid = validateUnitSlot(command.to, rules);
+    if (invalid) throw new Error(invalid);
+    const sourceSlot = findUnitSlot(next, command.unitId);
+    if (!sourceSlot || !next.unitsById[command.unitId]) throw new Error("来源位置无效。");
+    const targetUnitId = unitAt(next, command.to);
+    if (sourceSlot.zone === command.to.zone && sourceSlot.slot === command.to.slot) return "队列未变化。";
+    setUnitAt(next, sourceSlot, targetUnitId);
+    setUnitAt(next, command.to, command.unitId);
+    return "队列已调整。";
+  }
+
+  if (command.type === "mergeUnits") {
+    const source = getOwnedUnit(next, command.sourceUnitId);
+    const target = getOwnedUnit(next, command.targetUnitId);
+    if (!source || !target) throw new Error("没有找到要合成的动物。");
+    const merge = mergeMembers(next, source, target);
+    if (!merge.ok) throw new Error(merge.messageZh);
+    removeUnitFromSlot(next, source.instanceId);
+    delete next.unitsById[source.instanceId];
+    next.stats.merges += 1;
+    return "合成完成，若升级会进入高级发现。";
+  }
+
+  if (command.type === "recruitAnimal" || command.type === "recruitAndMerge") {
+    if (!camp) throw new Error("没有营地可招募。");
+    if (camp.supply < rules.recruitCost) throw new Error("补给不足，无法招募。");
+    const slot = findAnimalOfferSlot(next, command.offerId);
+    if (!slot?.offer || !slot.unlocked) throw new Error("这个动物位没有可招募动物。");
+    const member = createMember(slot.offer.speciesId, next.expeditionSeed, next.round, Object.keys(next.unitsById).length + 1);
+    if (command.type === "recruitAnimal") {
+      const invalid = validateUnitSlot(command.to, rules);
+      if (invalid) throw new Error(invalid);
+      if (unitAt(next, command.to)) throw new Error(command.to.zone === "formation" ? "目标战斗位已有动物。" : "目标替补位已有动物。");
+      insertUnit(next, member, command.to);
     } else {
-      const target = findOwned(next, action.targetInstanceId);
-      if (!target) return { ok: false, state, messageZh: "没有找到合成目标。" };
-      if (target.member.speciesId !== member.speciesId) return { ok: false, state, messageZh: "只能拖到同物种单位上合成。" };
-      const merge = mergeMembers(next, member, target.member);
-      if (!merge.ok) return { ok: false, state, messageZh: merge.messageZh };
+      const target = getOwnedUnit(next, command.targetUnitId);
+      if (!target) throw new Error("没有找到合成目标。");
+      if (target.speciesId !== member.speciesId) throw new Error("只能拖到同物种单位上合成。");
+      const merge = mergeMembers(next, member, target);
+      if (!merge.ok) throw new Error(merge.messageZh);
     }
     camp.supply -= rules.recruitCost;
     clearOffer(slot);
-    return { ok: true, state: next, messageZh: `${ANIMAL_BY_ID[member.speciesId].nameZh}已加入。` };
+    return `${ANIMAL_BY_ID[member.speciesId].nameZh}已加入。`;
   }
-  if (action.type === "moveOwned") {
-    const source = action.sourceArea === "team" ? next.team[action.sourceIndex] : next.reserve[action.sourceIndex];
-    if (action.sourceIndex < 0 || !source) return { ok: false, state, messageZh: "来源位置无效。" };
-    if (action.targetIndex < 0) return { ok: false, state, messageZh: "目标位置无效。" };
-    if (action.targetArea === "team" && action.targetIndex > 4) return { ok: false, state, messageZh: "战斗队最多 5 只。" };
-    if (action.targetArea === "reserve" && action.targetIndex > rules.reserveCapacity - 1) return { ok: false, state, messageZh: `替补区最多 ${rules.reserveCapacity} 只。` };
-    if (action.sourceArea === action.targetArea) {
-      if (action.sourceIndex === action.targetIndex) return { ok: true, state: next, messageZh: "队列未变化。" };
-      if (action.sourceArea === "team") {
-        const target = next.team[action.targetIndex] ?? null;
-        setTeamSlot(next.team, action.sourceIndex, target);
-        setTeamSlot(next.team, action.targetIndex, source);
-      } else {
-        const target = next.reserve[action.targetIndex];
-        if (target) {
-          [next.reserve[action.sourceIndex], next.reserve[action.targetIndex]] = [next.reserve[action.targetIndex], next.reserve[action.sourceIndex]];
-        } else {
-          const [moved] = next.reserve.splice(action.sourceIndex, 1);
-          const adjustedTarget = action.targetIndex > action.sourceIndex ? action.targetIndex - 1 : action.targetIndex;
-          next.reserve.splice(Math.min(adjustedTarget, next.reserve.length), 0, moved);
-        }
-      }
-      if (hasDuplicateOwnedIds(next)) return { ok: false, state, messageZh: "移动被取消：检测到重复个体。" };
-      return { ok: true, state: next, messageZh: "队列已调整。" };
-    }
-    const target = action.targetArea === "team" ? next.team[action.targetIndex] : next.reserve[action.targetIndex];
-    if (!target) {
-      if (action.targetArea === "team" && teamOccupancy(next.team) >= 5) return { ok: false, state, messageZh: "战斗队已满。" };
-      if (action.targetArea === "reserve" && next.reserve.length >= rules.reserveCapacity) return { ok: false, state, messageZh: "替补区已满。" };
-    }
-    if (action.sourceArea === "team" && action.targetArea === "reserve") {
-      if (target) {
-        setTeamSlot(next.team, action.sourceIndex, target);
-        next.reserve[action.targetIndex] = source;
-      } else {
-        setTeamSlot(next.team, action.sourceIndex, null);
-        next.reserve.splice(Math.min(action.targetIndex, next.reserve.length), 0, source);
-      }
-    } else {
-      if (target) {
-        next.reserve[action.sourceIndex] = target;
-        setTeamSlot(next.team, action.targetIndex, source);
-      } else {
-        next.reserve.splice(action.sourceIndex, 1);
-        setTeamSlot(next.team, action.targetIndex, source);
-      }
-    }
-    if (hasDuplicateOwnedIds(next)) return { ok: false, state, messageZh: "移动被取消：检测到重复个体。" };
-    return { ok: true, state: next, messageZh: "队列已调整。" };
-  }
-  if (action.type === "mergeOwned") {
-    const source = findOwned(next, action.sourceInstanceId);
-    const target = findOwned(next, action.targetInstanceId);
-    if (!source || !target) return { ok: false, state, messageZh: "没有找到要合成的动物。" };
-    const merge = mergeMembers(next, source.member, target.member);
-    if (!merge.ok) return { ok: false, state, messageZh: merge.messageZh };
-    removeOwned(next, source.area, source.index);
-    next.stats.merges += 1;
-    return { ok: true, state: next, messageZh: "合成完成，若升级会进入高级发现。" };
-  }
-  if (action.type === "release") {
-    if (!camp) return { ok: false, state, messageZh: "没有营地。" };
-    const found = findOwned(next, action.instanceId);
-    if (!found || found.area !== action.area) return { ok: false, state, messageZh: "没有找到要告别的动物。" };
-    removeOwned(next, found.area, found.index);
-    const refund = releaseRefundForLevel(memberLevel(found.member));
+
+  if (command.type === "releaseUnit") {
+    if (!camp) throw new Error("没有营地。");
+    const member = getOwnedUnit(next, command.unitId);
+    if (!member) throw new Error("没有找到要告别的动物。");
+    removeUnitFromSlot(next, command.unitId);
+    delete next.unitsById[command.unitId];
+    const refund = releaseRefundForLevel(memberLevel(member));
     camp.supply += refund;
-    return { ok: true, state: next, messageZh: `已告别并返还 ${refund} 点补给。` };
+    return `已告别并返还 ${refund} 点补给。`;
   }
-  if (action.type === "buyItemToInventory" || action.type === "buyAndUseItem") {
-    if (!camp) return { ok: false, state, messageZh: "没有营地可购买道具。" };
-    const slot = camp.itemSlots.find((item) => item.slotId === action.slotId);
-    if (!slot?.offer) return { ok: false, state, messageZh: "这个道具位是空的。" };
+
+  if (command.type === "moveItem") {
+    const sourceSlot = findItemSlot(next, command.itemInstanceId);
+    if (!sourceSlot || !next.itemsById[command.itemInstanceId]) throw new Error("没有找到仓库道具。");
+    if (sourceSlot.slot === command.to.slot) return "仓库未变化。";
+    const targetItemId = next.inventory[command.to.slot];
+    setItemAt(next, sourceSlot, targetItemId);
+    setItemAt(next, command.to, command.itemInstanceId);
+    return "仓库已调整。";
+  }
+
+  if (command.type === "purchaseItemToInventory" || command.type === "purchaseAndApplyItem") {
+    if (!camp) throw new Error("没有营地可购买道具。");
+    const slot = findItemOfferSlot(next, command.offerId);
+    if (!slot?.offer || !slot.unlocked) throw new Error("这个道具位是空的。");
     const item = ITEM_BY_ID[slot.offer.itemId];
-    if (camp.supply < item.price) return { ok: false, state, messageZh: "补给不足，无法购买道具。" };
-    if (action.type === "buyItemToInventory") {
-      if (next.inventory.length >= rules.inventoryCapacity) return { ok: false, state, messageZh: "仓库已满。" };
-      next.inventory.push({ instanceId: makeId("item", next.expeditionSeed + next.round, next.inventory.length + 1), itemId: item.id });
+    if (camp.supply < item.price) throw new Error("补给不足，无法购买道具。");
+    if (command.type === "purchaseItemToInventory") {
+      if (next.inventory[command.to.slot]) throw new Error("目标仓库位已有道具。");
+      const instance: ItemInstance = { instanceId: nextItemInstanceId(next), itemId: item.id };
+      next.itemsById[instance.instanceId] = instance;
+      setItemAt(next, command.to, instance.instanceId);
+    } else if (item.kind === "equipment") {
+      const equip = equipPurchasedItem(next, item.id, command.target.unitIds);
+      if (!equip.ok) throw new Error(equip.messageZh);
     } else {
-      if (item.kind === "equipment") {
-        const equip = equipPurchasedItem(next, item.id, action.targetInstanceIds, rules.inventoryCapacity);
-        if (!equip.ok) return { ok: false, state, messageZh: equip.messageZh };
-      } else {
-        const use = applyItemEffects(next, item.id, action.targetInstanceIds);
-        if (!use.ok) return { ok: false, state, messageZh: use.messageZh };
-      }
+      const use = applyItemEffects(next, item.id, command.target.unitIds);
+      if (!use.ok) throw new Error(use.messageZh);
     }
     camp.supply -= item.price;
     clearOffer(slot);
-    return { ok: true, state: next, messageZh: `${item.nameZh}已${action.type === "buyItemToInventory" ? "放入仓库" : item.kind === "equipment" ? "装备" : "使用"}。` };
+    return `${item.nameZh}已${command.type === "purchaseItemToInventory" ? "放入仓库" : item.kind === "equipment" ? "装备" : "使用"}。`;
   }
-  if (action.type === "useInventoryItem") {
-    const index = next.inventory.findIndex((item) => item.instanceId === action.itemInstanceId);
-    if (index < 0) return { ok: false, state, messageZh: "没有找到仓库道具。" };
-    const item = next.inventory[index];
+
+  if (command.type === "applyInventoryItem") {
+    const sourceSlot = findItemSlot(next, command.itemInstanceId);
+    const item = next.itemsById[command.itemInstanceId];
+    if (!sourceSlot || !item) throw new Error("没有找到仓库道具。");
     const def = ITEM_BY_ID[item.itemId];
-    if (def.kind === "equipment") return { ok: false, state, messageZh: "装备需要选择装备操作。" };
-    const use = applyItemEffects(next, item.itemId, action.targetInstanceIds);
-    if (!use.ok) return { ok: false, state, messageZh: use.messageZh };
-    next.inventory.splice(index, 1);
-    return { ok: true, state: next, messageZh: `${def.nameZh}已使用。` };
+    if (def.kind === "equipment") {
+      const equip = equipInventoryItem(next, item, command.target.unitIds[0], command.discardOld);
+      if (!equip.ok) throw new Error(equip.messageZh);
+    } else {
+      const use = applyItemEffects(next, item.itemId, command.target.unitIds);
+      if (!use.ok) throw new Error(use.messageZh);
+    }
+    setItemAt(next, sourceSlot, null);
+    delete next.itemsById[item.instanceId];
+    return def.kind === "equipment" ? "装备已更新。" : `${def.nameZh}已使用。`;
   }
-  if (action.type === "equipInventoryItem") {
-    const itemIndex = next.inventory.findIndex((item) => item.instanceId === action.itemInstanceId);
-    const target = findOwned(next, action.targetInstanceId);
-    if (itemIndex < 0 || !target) return { ok: false, state, messageZh: "装备或目标不存在。" };
-    const item = next.inventory[itemIndex];
-    const def = ITEM_BY_ID[item.itemId];
-    if (def.kind !== "equipment") return { ok: false, state, messageZh: "这个道具不是装备。" };
-    const old = target.member.equipment;
-    if (old && next.inventory.length >= rules.inventoryCapacity && !action.discardOld) return { ok: false, state, messageZh: "仓库已满，请确认丢弃旧装备。" };
-    next.inventory.splice(itemIndex, 1);
-    if (old && !action.discardOld) next.inventory.push({ instanceId: old.instanceId, itemId: old.itemId });
-    target.member.equipment = { instanceId: item.instanceId, itemId: item.itemId };
-    return { ok: true, state: next, messageZh: "装备已更新。" };
-  }
-  if (action.type === "chooseDiscovery") {
-    const index = next.pendingDiscoveries.findIndex((discovery) => discovery.discoveryId === action.discoveryId);
-    if (index < 0) return { ok: false, state, messageZh: "没有这个高级发现。" };
+
+  if (command.type === "chooseDiscovery") {
+    const index = next.pendingDiscoveries.findIndex((discovery) => discovery.discoveryId === command.discoveryId);
+    if (index < 0) throw new Error("没有这个高级发现。");
     const discovery = next.pendingDiscoveries[index];
-    if (!discovery.candidates.includes(action.speciesId)) return { ok: false, state, messageZh: "候选动物无效。" };
-    next.pendingRecruit = createMember(action.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, allOwned(next).length + 1);
+    if (!discovery.candidates.includes(command.speciesId)) throw new Error("候选动物无效。");
+    next.pendingRecruit = createMember(command.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, Object.keys(next.unitsById).length + 1);
     next.pendingDiscoveries.splice(index, 1);
     next.phase = "upgradeDiscovery";
-    return { ok: true, state: next, messageZh: "请选择把新伙伴放入战斗队或替补。" };
+    return "请选择把新伙伴放入战斗队或替补。";
   }
-  if (action.type === "discardPendingRecruit") {
-    if (!next.pendingRecruit) return { ok: false, state, messageZh: "没有待安置的新伙伴。" };
+
+  if (command.type === "discardPendingRecruit") {
+    if (!next.pendingRecruit) throw new Error("没有待安置的新伙伴。");
     next.pendingRecruit = null;
     next.phase = next.pendingDiscoveries.length ? "upgradeDiscovery" : "camp";
-    return { ok: true, state: next, messageZh: "已告别待安置伙伴。" };
+    return "已告别待安置伙伴。";
   }
-  if (action.type === "placePendingRecruit") {
-    if (!next.pendingRecruit) return { ok: false, state, messageZh: "没有待安置的新伙伴。" };
-    if (action.replaceInstanceId) {
-      const found = findOwned(next, action.replaceInstanceId);
-      if (!found) return { ok: false, state, messageZh: "没有找到要替换的单位。" };
-      const list = found.area === "team" ? next.team : next.reserve;
-      if (found.area === "team") setTeamSlot(next.team, found.index, next.pendingRecruit);
-      else list[found.index] = next.pendingRecruit;
-    } else {
-      if (action.area === "team" && teamOccupancy(next.team) >= 5) return { ok: false, state, messageZh: "战斗队已满。" };
-      if (action.area === "reserve" && next.reserve.length >= rules.reserveCapacity) return { ok: false, state, messageZh: "替补区已满。" };
-      insertOwned(next, action.area, next.pendingRecruit, action.index);
-    }
+
+  if (command.type === "placePendingRecruit") {
+    if (!next.pendingRecruit) throw new Error("没有待安置的新伙伴。");
+    const target = command.replaceUnitId ? findUnitSlot(next, command.replaceUnitId) : command.to;
+    if (!target) throw new Error("没有找到要替换的单位。");
+    const invalid = validateUnitSlot(target, rules);
+    if (invalid) throw new Error(invalid);
+    if (!command.replaceUnitId && unitAt(next, target)) throw new Error(target.zone === "formation" ? "目标战斗位已有动物。" : "目标替补位已有动物。");
+    if (command.replaceUnitId) delete next.unitsById[command.replaceUnitId];
+    insertUnit(next, next.pendingRecruit, target);
     next.pendingRecruit = null;
     next.phase = next.pendingDiscoveries.length ? "upgradeDiscovery" : "camp";
-    return { ok: true, state: next, messageZh: "高级发现伙伴已安置。" };
+    return "高级发现伙伴已安置。";
   }
-  return { ok: false, state, messageZh: "未知营地操作。" };
+
+  throw new Error("未知营地操作。");
+}
+
+export function applyCampCommand(state: ExpeditionState, command: CampCommand): DomainResult<CampTransition> {
+  const next = structuredClone(state) as ExpeditionState;
+  try {
+    const messageZh = applyCampCommandUnchecked(next, command);
+    assertCampInvariants(next);
+    return { ok: true, state: { state: next, command }, messageZh };
+  } catch (error) {
+    return { ok: false, state: { state, command }, messageZh: error instanceof Error ? error.message : "营地操作失败。" };
+  }
 }
 
 function releaseRefundForLevel(level: 1 | 2 | 3): number {
@@ -470,7 +588,7 @@ function mergeMembers(state: ExpeditionState, source: TeamMember, target: TeamMe
   target.timedStatuses = [...target.timedStatuses, ...source.timedStatuses].sort((a, b) => a.statusId.localeCompare(b.statusId));
   if (!target.equipment && source.equipment) target.equipment = source.equipment;
   if (target.equipment && source.equipment && target.equipment.instanceId !== source.equipment.instanceId) {
-    state.inventory.push({ instanceId: source.equipment.instanceId, itemId: source.equipment.itemId });
+    if (!addInventoryItemToFirstEmptySlot(state, { instanceId: source.equipment.instanceId, itemId: source.equipment.itemId })) return { ok: false, messageZh: "仓库已满，无法保留源单位装备。" };
   }
   const after = levelFromBondXp(target.bondXp);
   if (after > before) {
@@ -558,20 +676,33 @@ function applyItemEffects(state: ExpeditionState, itemId: keyof typeof ITEM_BY_I
   return { ok: true, messageZh: `${item.nameZh}已生效。` };
 }
 
-function equipPurchasedItem(state: ExpeditionState, itemId: keyof typeof ITEM_BY_ID, targetInstanceIds: string[], inventoryCapacity: number): { ok: boolean; messageZh: string } {
+function equipPurchasedItem(state: ExpeditionState, itemId: keyof typeof ITEM_BY_ID, targetInstanceIds: string[]): { ok: boolean; messageZh: string } {
   const targetId = targetInstanceIds[0];
   if (!targetId) return { ok: false, messageZh: "请选择要装备的动物。" };
-  const target = findOwned(state, targetId);
+  const target = getOwnedUnit(state, targetId);
   if (!target) return { ok: false, messageZh: "装备目标不存在。" };
-  const old = target.member.equipment;
-  if (old && state.inventory.length >= inventoryCapacity) return { ok: false, messageZh: "仓库已满，请先处理旧装备。" };
-  if (old) state.inventory.push({ instanceId: old.instanceId, itemId: old.itemId });
-  target.member.equipment = { instanceId: makeId("item", state.expeditionSeed + state.round, state.inventory.length + 1), itemId };
+  const old = target.equipment;
+  if (old && firstEmptyInventorySlot(state) < 0) return { ok: false, messageZh: "仓库已满，请先处理旧装备。" };
+  if (old) addInventoryItemToFirstEmptySlot(state, { instanceId: old.instanceId, itemId: old.itemId });
+  target.equipment = { instanceId: nextItemInstanceId(state), itemId };
+  return { ok: true, messageZh: "装备已更新。" };
+}
+
+function equipInventoryItem(state: ExpeditionState, item: ItemInstance, targetId: string | undefined, discardOld?: boolean): { ok: boolean; messageZh: string } {
+  if (!targetId) return { ok: false, messageZh: "请选择要装备的动物。" };
+  const target = getOwnedUnit(state, targetId);
+  if (!target) return { ok: false, messageZh: "装备目标不存在。" };
+  const def = ITEM_BY_ID[item.itemId];
+  if (def.kind !== "equipment") return { ok: false, messageZh: "这个道具不是装备。" };
+  const old = target.equipment;
+  if (old && firstEmptyInventorySlot(state) < 0 && !discardOld) return { ok: false, messageZh: "仓库已满，请确认丢弃旧装备。" };
+  target.equipment = { instanceId: item.instanceId, itemId: item.itemId };
+  if (old && !discardOld) addInventoryItemToFirstEmptySlot(state, { instanceId: old.instanceId, itemId: old.itemId });
   return { ok: true, messageZh: "装备已更新。" };
 }
 
 function selectItemTargets(state: ExpeditionState, scope: { kind: string; habitat?: Habitat }, ids: string[]): TeamMember[] {
-  const owned = allOwned(state);
+  const owned = allOwnedMembers(state);
   if (scope.kind === "singleUnit") return owned.filter((member) => ids.includes(member.instanceId)).slice(0, 1);
   if (scope.kind === "allOwned") return owned;
   if (scope.kind === "habitat" && scope.habitat) return owned.filter((member) => ANIMAL_BY_ID[member.speciesId].habitats.includes(scope.habitat as Habitat));

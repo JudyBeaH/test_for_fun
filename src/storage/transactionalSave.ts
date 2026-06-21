@@ -1,4 +1,4 @@
-import { createEmptySave, validateSave } from "../domain/saveSchema";
+import { createEmptySave, migrateSave } from "../domain/saveSchema";
 import type { AppSave } from "../domain/types";
 
 export const SAVE_KEY = "wildtrail_save";
@@ -15,7 +15,7 @@ function parse(raw: string | null): AppSave | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as unknown;
-    return validateSave(value) ? value : null;
+    return migrateSave(value);
   } catch {
     return null;
   }

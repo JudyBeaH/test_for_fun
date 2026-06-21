@@ -177,13 +177,20 @@ export interface TeamMember {
   participatedRounds: number;
 }
 
+export type UnitId = string;
+export type ItemInstanceId = string;
+export type OfferId = string;
+export type Fixed5<T> = [T, T, T, T, T];
+export type Fixed3<T> = [T, T, T];
+export type Fixed2<T> = [T, T];
+
 export interface AnimalOffer {
-  offerInstanceId: string;
+  offerInstanceId: OfferId;
   speciesId: SpeciesId;
 }
 
 export interface ItemOffer {
-  offerInstanceId: string;
+  offerInstanceId: OfferId;
   itemId: ItemId;
 }
 
@@ -200,8 +207,8 @@ export interface CampState {
   campLevel: 1 | 2 | 3;
   supply: number;
   freeRefreshes: number;
-  animalSlots: OfferSlot<AnimalOffer>[];
-  itemSlots: OfferSlot<ItemOffer>[];
+  animalOffers: Fixed5<OfferSlot<AnimalOffer>>;
+  itemOffers: Fixed2<OfferSlot<ItemOffer>>;
   lastSaveMessage?: string;
 }
 
@@ -301,15 +308,46 @@ export interface ExpeditionState {
   badges: number;
   morale: number;
   camp: CampState | null;
-  team: Array<TeamMember | null>;
-  reserve: TeamMember[];
-  inventory: ItemInstance[];
+  unitsById: Record<UnitId, TeamMember>;
+  itemsById: Record<ItemInstanceId, ItemInstance>;
+  formation: Fixed5<UnitId | null>;
+  reserve: Fixed3<UnitId | null>;
+  inventory: Fixed3<ItemInstanceId | null>;
   pendingRecruit: TeamMember | null;
   pendingDiscoveries: UpgradeDiscovery[];
   pendingBattle: PendingBattle | null;
   battleHistory: BattleRecord[];
   finalVictoryRecord: FinalVictoryRecord | null;
   stats: ExpeditionStats;
+}
+
+export type UnitSlotRef =
+  | { zone: "formation"; slot: 0 | 1 | 2 | 3 | 4 }
+  | { zone: "reserve"; slot: 0 | 1 | 2 };
+
+export type ItemSlotRef = { zone: "inventory"; slot: 0 | 1 | 2 };
+
+export type ItemTarget = { kind: "units"; unitIds: UnitId[] };
+
+export type CampCommand =
+  | { type: "toggleHold"; slotKind: "animal" | "item"; offerId: OfferId; expectedRevision?: number }
+  | { type: "refresh"; expectedRevision?: number }
+  | { type: "moveUnit"; unitId: UnitId; to: UnitSlotRef; expectedRevision?: number }
+  | { type: "mergeUnits"; sourceUnitId: UnitId; targetUnitId: UnitId; expectedRevision?: number }
+  | { type: "recruitAnimal"; offerId: OfferId; to: UnitSlotRef; expectedRevision?: number }
+  | { type: "recruitAndMerge"; offerId: OfferId; targetUnitId: UnitId; expectedRevision?: number }
+  | { type: "releaseUnit"; unitId: UnitId; expectedRevision?: number }
+  | { type: "moveItem"; itemInstanceId: ItemInstanceId; to: ItemSlotRef; expectedRevision?: number }
+  | { type: "purchaseItemToInventory"; offerId: OfferId; to: ItemSlotRef; expectedRevision?: number }
+  | { type: "purchaseAndApplyItem"; offerId: OfferId; target: ItemTarget; expectedRevision?: number }
+  | { type: "applyInventoryItem"; itemInstanceId: ItemInstanceId; target: ItemTarget; discardOld?: boolean; expectedRevision?: number }
+  | { type: "chooseDiscovery"; discoveryId: string; speciesId: SpeciesId; expectedRevision?: number }
+  | { type: "discardPendingRecruit"; expectedRevision?: number }
+  | { type: "placePendingRecruit"; to: UnitSlotRef; replaceUnitId?: UnitId; expectedRevision?: number };
+
+export interface CampTransition {
+  state: ExpeditionState;
+  command: CampCommand;
 }
 
 export interface BattleUnit {
@@ -420,23 +458,6 @@ export interface BattleOutput {
   diagnostics: string[];
 }
 
-export type CampAction =
-  | { type: "toggleHold"; slotKind: "animal" | "item"; slotId: string; expectedRevision?: number }
-  | { type: "refresh"; expectedRevision?: number }
-  | { type: "recruitToTeam"; slotId: string; targetIndex?: number; expectedRevision?: number }
-  | { type: "recruitToReserve"; slotId: string; targetIndex?: number; expectedRevision?: number }
-  | { type: "recruitMerge"; slotId: string; targetInstanceId: string; expectedRevision?: number }
-  | { type: "moveOwned"; sourceArea: "team" | "reserve"; sourceIndex: number; targetArea: "team" | "reserve"; targetIndex: number; expectedRevision?: number }
-  | { type: "mergeOwned"; sourceInstanceId: string; targetInstanceId: string; expectedRevision?: number }
-  | { type: "release"; area: "team" | "reserve"; instanceId: string; expectedRevision?: number }
-  | { type: "buyItemToInventory"; slotId: string; expectedRevision?: number }
-  | { type: "buyAndUseItem"; slotId: string; targetInstanceIds: string[]; expectedRevision?: number }
-  | { type: "useInventoryItem"; itemInstanceId: string; targetInstanceIds: string[]; expectedRevision?: number }
-  | { type: "equipInventoryItem"; itemInstanceId: string; targetInstanceId: string; discardOld?: boolean; expectedRevision?: number }
-  | { type: "chooseDiscovery"; discoveryId: string; speciesId: SpeciesId; expectedRevision?: number }
-  | { type: "discardPendingRecruit"; expectedRevision?: number }
-  | { type: "placePendingRecruit"; area: "team" | "reserve"; index?: number; replaceInstanceId?: string; expectedRevision?: number };
-
 export interface DomainResult<T> {
   ok: boolean;
   state: T;
@@ -476,7 +497,7 @@ export interface ChallengeRecord {
 }
 
 export interface AppSave {
-  schemaVersion: 2;
+  schemaVersion: 3;
   saveRevision: number;
   activeExpedition: ExpeditionState | null;
   collection: Record<SpeciesId, {
