@@ -1,10 +1,11 @@
 import { CONTENT_VERSION, ENGINE_VERSION, INITIAL_EXPEDITION, REGION_ID, REGION_NAME_ZH } from "../content/constants";
 import { ANIMAL_BY_ID } from "../content/animals";
-import type { AppSave, DomainResult, ExpeditionState, RegisteredTeam, SpeciesId, TeamMember } from "./types";
+import type { AppSave, DomainResult, ExpeditionState, RegisteredTeam, RewardChoice, SpeciesId, TeamMember } from "./types";
 import { makeRunId, makeTeamId } from "./ids";
 import { enterCamp, toTeamSnapshot } from "./campEngine";
 import { battleInputForState } from "../sim/opponentGenerator";
 import { resolveBattle } from "./battleEngine";
+import { applyRewardChoice, createRewardChoices } from "./rewardEngine";
 
 function presentMembers(members: readonly (TeamMember | null | undefined)[]): TeamMember[] {
   return members.filter((member): member is TeamMember => Boolean(member));
@@ -131,8 +132,10 @@ export function settleResolvedBattle(state: ExpeditionState): DomainResult<Exped
 export function finishBattleReport(state: ExpeditionState): ExpeditionState {
   const next = structuredClone(state) as ExpeditionState;
   if (next.badges >= 10) {
+    next.pendingBattle = null;
     next.phase = "successResolution";
   } else if (next.morale <= 0) {
+    next.pendingBattle = null;
     next.phase = "returnResolution";
   } else {
     const leftover = next.camp?.supply ?? 0;
@@ -141,6 +144,76 @@ export function finishBattleReport(state: ExpeditionState): ExpeditionState {
     return enterCamp(next, leftover);
   }
   return next;
+}
+
+export interface SuccessResolutionInput {
+  save: AppSave;
+  expedition: ExpeditionState;
+  adoptedSpeciesId: SpeciesId;
+  rewardChoices: readonly RewardChoice[];
+  teamName: string;
+  createdAtIso: string;
+  maxRegisteredTeams?: number;
+}
+
+export type SuccessResolutionSavePatch = Pick<AppSave, "activeExpedition" | "collection" | "habitatSeeds" | "unlockedCosmetics" | "registeredTeams">;
+
+export function completeSuccessResolution(input: SuccessResolutionInput): DomainResult<{ savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }> {
+  const { save, expedition, adoptedSpeciesId, rewardChoices, teamName, createdAtIso, maxRegisteredTeams = 20 } = input;
+  if (expedition.phase !== "successResolution") {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "当前不在成功结算阶段。" };
+  }
+  if (expedition.badges < 10) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "远征章不足，无法登记成功队伍。" };
+  }
+  if (expedition.pendingBattle) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "最终战尚未归档，请先完成战斗报告。" };
+  }
+  const record = expedition.finalVictoryRecord;
+  if (!record) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "没有最终胜利战前快照，无法登记。" };
+  }
+  if (!record.playerPreBattleSnapshot.units.some((unit) => unit.speciesId === adoptedSpeciesId)) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "只能领养最终战前队伍中的动物。" };
+  }
+  if (rewardChoices.length !== 2) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "请选择两项成功纪念。" };
+  }
+  const legalRewards = createRewardChoices(expedition, save, expedition.expeditionSeed);
+  const legalIds = new Set(legalRewards.map((choice) => choice.id));
+  const chosenIds = rewardChoices.map((choice) => choice.id);
+  if (new Set(chosenIds).size !== 2) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "两项成功纪念不能重复。" };
+  }
+  if (!chosenIds.every((id) => legalIds.has(id))) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "成功纪念选项无效。" };
+  }
+  const created = createRegisteredTeam(expedition, teamName, save.registeredTeams.length, createdAtIso);
+  if (!created.ok) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: created.messageZh };
+  }
+
+  let next = structuredClone(save) as AppSave;
+  for (const reward of rewardChoices) next = applyRewardChoice(next, reward);
+  next.collection[adoptedSpeciesId].seen = true;
+  next.collection[adoptedSpeciesId].adopted = true;
+  next.registeredTeams = [created.state, ...next.registeredTeams].slice(0, maxRegisteredTeams);
+  next.activeExpedition = null;
+
+  return {
+    ok: true,
+    state: {
+      savePatch: {
+        activeExpedition: next.activeExpedition,
+        collection: next.collection,
+        habitatSeeds: next.habitatSeeds,
+        unlockedCosmetics: next.unlockedCosmetics,
+        registeredTeams: next.registeredTeams,
+      },
+      registeredTeam: created.state,
+    },
+    messageZh: "成功队伍已登记。",
+  };
 }
 
 export function createRegisteredTeam(state: ExpeditionState, name: string, existingCount: number, createdAtIso: string): DomainResult<RegisteredTeam> {

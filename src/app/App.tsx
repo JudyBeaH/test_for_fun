@@ -5,7 +5,7 @@ import { ENVIRONMENT_BY_ID } from "../content/environments";
 import { ITEM_BY_ID } from "../content/items";
 import { applyCampAction, computeCampRules, memberLevel } from "../domain/campEngine";
 import { decodeChallengeCode, encodeChallengeCode } from "../domain/challengeCode";
-import { createExpedition, createRegisteredTeam, finishBattleReport, prepareBattle, resolvePreparedBattle } from "../domain/expeditionEngine";
+import { completeSuccessResolution, createExpedition, finishBattleReport, prepareBattle, resolvePreparedBattle } from "../domain/expeditionEngine";
 import { applyChallengeReward, applyRewardChoice, createRewardChoices } from "../domain/rewardEngine";
 import type { AppSave, BattleEvent, BattleOutput, CampAction, ExpeditionState, RegisteredTeam, RewardChoice, Side, SpeciesId, TeamMember, TeamSnapshotUnit } from "../domain/types";
 import { resolveBattle } from "../domain/battleEngine";
@@ -30,6 +30,7 @@ export function App() {
 
   useEffect(() => {
     if (!expedition?.pendingBattle || expedition.pendingBattle.output) return;
+    if (expedition.phase !== "battlePreparing" && expedition.phase !== "battlePlayback") return;
     const resolved = resolvePreparedBattle(expedition);
     if (!resolved.ok) {
       setMessage(resolved.messageZh);
@@ -106,20 +107,19 @@ export function App() {
 
   function registerSuccess(speciesId: SpeciesId, name: string, rewards: RewardChoice[]) {
     if (!expedition) return;
-    const created = createRegisteredTeam(expedition, name, save.registeredTeams.length, new Date().toISOString());
-    if (!created.ok) {
-      setMessage(created.messageZh);
+    const completed = completeSuccessResolution({
+      save,
+      expedition,
+      adoptedSpeciesId: speciesId,
+      rewardChoices: rewards,
+      teamName: name,
+      createdAtIso: new Date().toISOString(),
+    });
+    if (!completed.ok) {
+      setMessage(completed.messageZh);
       return;
     }
-    update((current) => {
-      let next = structuredClone(current) as AppSave;
-      for (const reward of rewards.slice(0, 2)) next = applyRewardChoice(next, reward);
-      next.collection[speciesId].seen = true;
-      next.collection[speciesId].adopted = true;
-      next.registeredTeams = [created.state, ...next.registeredTeams].slice(0, 20);
-      next.activeExpedition = null;
-      return next;
-    }, "成功队伍已登记。");
+    update((current) => ({ ...current, ...completed.state.savePatch }), completed.messageZh);
     setScreen("champions");
   }
 
@@ -146,9 +146,24 @@ export function App() {
 }
 
 function phaseToScreen(expedition: ExpeditionState): Screen {
-  if (expedition.pendingBattle || expedition.phase === "battlePreparing" || expedition.phase === "battlePlayback") return "battle";
-  if (["battleReport", "successResolution", "returnResolution"].includes(expedition.phase)) return "report";
-  return "camp";
+  switch (expedition.phase) {
+    case "camp":
+    case "upgradeDiscovery":
+      return "camp";
+    case "battlePreparing":
+    case "battlePlayback":
+      return "battle";
+    case "battleReport":
+    case "successResolution":
+    case "returnResolution":
+      return "report";
+    case "completed":
+      return "home";
+    default: {
+      const unreachable: never = expedition.phase;
+      return unreachable;
+    }
+  }
 }
 
 function markSeen(save: AppSave, expedition: ExpeditionState): AppSave {
