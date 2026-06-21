@@ -1,0 +1,180 @@
+{
+  "runs": 1000,
+  "seed": 20260620,
+  "successRate": 0,
+  "averageBadges": 3.708,
+  "averageRounds": 8.252,
+  "averageBattleEvents": 59.026296655356276,
+  "safetyCapCount": 0,
+  "drawRate": 0.06592341250605914,
+  "species": {
+    "hedgehog": {
+      "seenRate": 0.998,
+      "recruitRate": 0.839,
+      "reserveRate": 0.26,
+      "averageFinalLevel": 0.874,
+      "teamWinRate": 0.3479680143670647,
+      "averageContribution": 89.024
+    },
+    "frog": {
+      "seenRate": 0.999,
+      "recruitRate": 0.728,
+      "reserveRate": 0.219,
+      "averageFinalLevel": 0.796,
+      "teamWinRate": 0.2982295914282031,
+      "averageContribution": 24.02275
+    },
+    "mussel": {
+      "seenRate": 0.998,
+      "recruitRate": 0.829,
+      "reserveRate": 0.235,
+      "averageFinalLevel": 0.872,
+      "teamWinRate": 0.34179961307141454,
+      "averageContribution": 99.426
+    },
+    "swallow": {
+      "seenRate": 0.998,
+      "recruitRate": 0.551,
+      "reserveRate": 0.22,
+      "averageFinalLevel": 0.627,
+      "teamWinRate": 0.23623100477768913,
+      "averageContribution": 16.1155
+    },
+    "otter": {
+      "seenRate": 0.845,
+      "recruitRate": 0.008,
+      "reserveRate": 0.018,
+      "averageFinalLevel": 0.024,
+      "teamWinRate": 0.0014285714285714286,
+      "averageContribution": 0.231
+    },
+    "hare": {
+      "seenRate": 0.85,
+      "recruitRate": 0.011,
+      "reserveRate": 0.02,
+      "averageFinalLevel": 0.027,
+      "teamWinRate": 0.0021214285714285714,
+      "averageContribution": 0.2875
+    },
+    "kingfisher": {
+      "seenRate": 0.847,
+      "recruitRate": 0.002,
+      "reserveRate": 0.005,
+      "averageFinalLevel": 0.007,
+      "teamWinRate": 0.0009,
+      "averageContribution": 0.038
+    },
+    "carp": {
+      "seenRate": 0.829,
+      "recruitRate": 0.01,
+      "reserveRate": 0.023,
+      "averageFinalLevel": 0.031,
+      "teamWinRate": 0.0024357142857142854,
+      "averageContribution": 0.177
+    },
+    "crow": {
+      "seenRate": 0.423,
+      "recruitRate": 0,
+      "reserveRate": 0,
+      "averageFinalLevel": 0,
+      "teamWinRate": 0,
+      "averageContribution": 0
+    },
+    "pangolin": {
+      "seenRate": 0.436,
+      "recruitRate": 0,
+      "reserveRate": 0,
+      "averageFinalLevel": 0,
+      "teamWinRate": 0,
+      "averageContribution": 0
+    },
+    "egret": {
+      "seenRate": 0.427,
+      "recruitRate": 0,
+      "reserveRate": 0,
+      "averageFinalLevel": 0,
+      "teamWinRate": 0,
+      "averageContribution": 0
+    },
+    "weasel": {
+      "seenRate": 0.421,
+      "recruitRate": 0,
+      "reserveRate": 0,
+      "averageFinalLevel": 0,
+      "teamWinRate": 0,
+      "averageContribution": 0
+    }
+  },
+  "items": {
+    "red_berry": {
+      "appearanceRate": 2.757,
+      "purchaseRate": 1.98,
+      "useRate": 1.98,
+      "equipRate": 0
+    },
+    "river_moss": {
+      "appearanceRate": 2.736,
+      "purchaseRate": 0,
+      "useRate": 0,
+      "equipRate": 0
+    },
+    "bond_nut": {
+      "appearanceRate": 2.745,
+      "purchaseRate": 0,
+      "useRate": 0,
+      "equipRate": 0
+    },
+    "pinecone_sling": {
+      "appearanceRate": 2.825,
+      "purchaseRate": 22.594,
+      "useRate": 22.594,
+      "equipRate": 22.594
+    },
+    "bitter_root": {
+      "appearanceRate": 2.746,
+      "purchaseRate": 0,
+      "useRate": 0,
+      "equipRate": 0
+    },
+    "melatonin": {
+      "appearanceRate": 2.695,
+      "purchaseRate": 1.976,
+      "useRate": 1.976,
+      "equipRate": 0
+    }
+  },
+  "merges": 0,
+  "upgradeDiscoveries": 0,
+  "discoveryChoices": {},
+  "environments": {
+    "wetland_channel": {
+      "battles": 2738,
+      "winRate": 0.4572680788897005
+    },
+    "meadow": {
+      "battles": 2750,
+      "winRate": 0.44472727272727275
+    },
+    "canopy": {
+      "battles": 2764,
+      "winRate": 0.44609261939218525
+    }
+  },
+  "rewardDistribution": {
+    "companionMark": 334,
+    "unknownTrace": 333,
+    "habitatSeed": 333
+  },
+  "melatonin": {
+    "uses": 1976,
+    "wakes": 1787,
+    "empoweredHits": 2724
+  },
+  "averageCampActions": 15.053,
+  "averageRemainingSupply": 8.756,
+  "invalidActionReasons": {
+    "仓库已满，请确认丢弃旧装备。": 608,
+    "替补区已满。": 212996,
+    "仓库已满，请先处理旧装备。": 21091
+  }
+}
