@@ -1,0 +1,16 @@
+在当前仓库根目录放置新版 AGENTS.md 和 docs/CONTENT_ROSTER_ZHEJIANG.md 后，先给 Codex：
+
+Read AGENTS.md and PROJECT_IMPLEMENTATION.md. Work only on P0 and P1 first.
+Inspect the existing implementation rather than rewriting from scratch.
+Reproduce the 9-to-10-win bug with a regression test before changing production code.
+Do not start P2, add animals, or polish animation until P1 tests, lint, and build pass.
+When finished, report using the phase report format in AGENTS.md and stop.
+
+P1 完成、人工验证成功页后，再给：
+
+Continue with P2 only. Convert formation, reserve, inventory, and offer areas to
+stable fixed slots and ID-based atomic CampCommand transitions. Preserve all
+unrelated behavior, add save migration and invariant/property-style tests, run
+test/lint/build, report, and stop.
+
+不要一次让 Codex 完成 P0–P7。
