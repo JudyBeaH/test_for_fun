@@ -366,12 +366,17 @@ small { color: #5d6d61; }
   padding: 0.35rem;
   transition: transform 180ms ease, opacity 220ms ease, filter 180ms ease;
 }
-.battlePet:not(.retreated) { animation: idlePulse 1.8s ease-in-out infinite; }
+.battlePet:not(.retreated):not(.moved) { animation: idlePulse 1.8s ease-in-out infinite; }
 .battlePet.highlighted {
   filter: drop-shadow(0 0 8px #fff) drop-shadow(0 0 6px #ffca2e);
 }
 .battlePet.source .petGlyph { outline: 4px solid #3b6eea; }
 .battlePet.target .petGlyph { outline: 4px solid #d83232; }
+.battlePet.moved .petGlyph { outline: 4px solid #ffca2e; }
+.battlePet.player.movedBack { animation: playerMoveBack 520ms cubic-bezier(.18,.88,.24,1.05); }
+.battlePet.player.movedForward { animation: playerMoveForward 520ms cubic-bezier(.18,.88,.24,1.05); }
+.battlePet.opponent.movedBack { animation: opponentMoveBack 520ms cubic-bezier(.18,.88,.24,1.05); }
+.battlePet.opponent.movedForward { animation: opponentMoveForward 520ms cubic-bezier(.18,.88,.24,1.05); }
 .battlePet.retreated {
   opacity: 0.38;
   transform: translateY(-42px) rotate(22deg) scale(0.72);
@@ -478,6 +483,26 @@ small { color: #5d6d61; }
 @keyframes idlePulse {
   0%, 100% { transform: translateX(0); }
   50% { transform: translateX(4px); }
+}
+@keyframes playerMoveBack {
+  0% { transform: translateX(96px) translateY(-18px) scale(1.05); }
+  65% { transform: translateX(-8px) translateY(-4px) scale(1.03); }
+  100% { transform: translateX(0) translateY(0) scale(1); }
+}
+@keyframes playerMoveForward {
+  0% { transform: translateX(-96px) translateY(-10px) scale(1.05); }
+  65% { transform: translateX(8px) translateY(-2px) scale(1.03); }
+  100% { transform: translateX(0) translateY(0) scale(1); }
+}
+@keyframes opponentMoveBack {
+  0% { transform: translateX(-96px) translateY(-18px) scale(1.05); }
+  65% { transform: translateX(8px) translateY(-4px) scale(1.03); }
+  100% { transform: translateX(0) translateY(0) scale(1); }
+}
+@keyframes opponentMoveForward {
+  0% { transform: translateX(96px) translateY(-10px) scale(1.05); }
+  65% { transform: translateX(-8px) translateY(-2px) scale(1.03); }
+  100% { transform: translateX(0) translateY(0) scale(1); }
 }
 
 @media (orientation: portrait) {

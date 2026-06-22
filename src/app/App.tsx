@@ -224,6 +224,8 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
   const [selected, setSelected] = useState<SelectedFocus | null>(null);
   const [dragging, setDragging] = useState<DragPayload | null>(null);
   const draggingRef = useRef<DragPayload | null>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number; payload: DragPayload } | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const selectedMember = selected?.kind === "member" ? (selected.area === "team" ? formation : reserve)[selected.index] : undefined;
   const selectedAnimalOffer = selected?.kind === "animalOffer" ? camp.animalOffers.find((slot) => slot.offer?.offerInstanceId === selected.slotId) : undefined;
@@ -240,6 +242,8 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
 
   function stopDrag() {
     draggingRef.current = null;
+    pointerRef.current = null;
+    pointerStartRef.current = null;
     setDragging(null);
   }
 
@@ -254,9 +258,11 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
     return {
       onContextMenu: (event: ReactMouseEvent) => event.preventDefault(),
       onPointerDown: (event: ReactPointerEvent) => {
+        pointerRef.current = { x: event.clientX, y: event.clientY };
+        pointerStartRef.current = { x: event.clientX, y: event.clientY, payload };
+        (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
         if (event.button === 2) {
           event.preventDefault();
-          (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
           startDrag(payload);
           return;
         }
@@ -266,14 +272,27 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
         }
       },
       onPointerMove: (event: ReactPointerEvent) => {
+        pointerRef.current = { x: event.clientX, y: event.clientY };
+        const start = pointerStartRef.current;
+        if (!draggingRef.current && start) {
+          const distance = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+          if (distance >= 7) {
+            cancelLongPress();
+            startDrag(start.payload);
+          }
+        }
         if (draggingRef.current) event.preventDefault();
       },
       onPointerUp: (event: ReactPointerEvent) => {
         cancelLongPress();
         const payload = draggingRef.current;
-        if (!payload) return;
+        if (!payload) {
+          pointerStartRef.current = null;
+          return;
+        }
         event.preventDefault();
-        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-drop-kind]") ?? null;
+        pointerRef.current = { x: event.clientX, y: event.clientY };
+        const target = dropTargetFromPoint(event.clientX, event.clientY);
         handleDrop(payload, target);
         stopDrag();
       },
@@ -282,6 +301,38 @@ function Camp({ expedition, onAction, onDepart }: { expedition: ExpeditionState;
         stopDrag();
       },
     };
+  }
+
+  useEffect(() => {
+    if (!dragging) return;
+    function onPointerUp(event: PointerEvent) {
+      const payload = draggingRef.current;
+      if (!payload) return;
+      const point = pointerRef.current ?? { x: event.clientX, y: event.clientY };
+      handleDrop(payload, dropTargetFromPoint(point.x, point.y));
+      stopDrag();
+    }
+    function onCancel() {
+      cancelLongPress();
+      stopDrag();
+    }
+    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointercancel", onCancel, true);
+    window.addEventListener("blur", onCancel);
+    return () => {
+      window.removeEventListener("pointerup", onPointerUp, true);
+      window.removeEventListener("pointercancel", onCancel, true);
+      window.removeEventListener("blur", onCancel);
+    };
+  }, [dragging]);
+
+  function dropTargetFromPoint(x: number, y: number): HTMLElement | null {
+    const elements = document.elementsFromPoint(x, y);
+    for (const element of elements) {
+      const target = element.closest<HTMLElement>("[data-drop-kind]");
+      if (target) return target;
+    }
+    return null;
   }
 
   function handleDrop(payload: DragPayload, target: HTMLElement | null) {
@@ -444,7 +495,9 @@ function BattleView({ expedition, battle, onDone, settings, updateSettings }: { 
   const atResult = cursor >= battle.events.length - 1;
   const sourceId = event?.sourceUnitId;
   const targetId = event?.targetUnitId;
-  const frameById = useMemo(() => buildBattleFrame(input?.playerTeam.units ?? [], input?.opponentTeam.units ?? [], battle.events.slice(0, cursor + 1)), [battle.events, cursor, input?.opponentTeam.units, input?.playerTeam.units]);
+  const cueEnd = useMemo(() => battleCueEndIndex(battle.events, cursor), [battle.events, cursor]);
+  const frameById = useMemo(() => buildBattleFrame(input?.playerTeam.units ?? [], input?.opponentTeam.units ?? [], battle.events.slice(0, cueEnd + 1)), [battle.events, cueEnd, input?.opponentTeam.units, input?.playerTeam.units]);
+  const activeMoveById = useMemo(() => activeMovementEventsByUnitId(battle.events, cursor), [battle.events, cursor]);
 
   useEffect(() => {
     if (!playing || atResult) return;
@@ -468,9 +521,9 @@ function BattleView({ expedition, battle, onDone, settings, updateSettings }: { 
       <div className="mountainLayer" />
       <div className="treeLayer" />
       <div className="roadLayer" />
-      <BattleQueue side="player" units={input?.playerTeam.units ?? []} frameById={frameById} sourceId={sourceId} targetId={targetId} />
+      <BattleQueue side="player" units={input?.playerTeam.units ?? []} frameById={frameById} sourceId={sourceId} targetId={targetId} activeMoveById={activeMoveById} />
       <div className="centerLine"><span>前排交锋</span></div>
-      <BattleQueue side="opponent" units={input?.opponentTeam.units ?? []} frameById={frameById} sourceId={sourceId} targetId={targetId} />
+      <BattleQueue side="opponent" units={input?.opponentTeam.units ?? []} frameById={frameById} sourceId={sourceId} targetId={targetId} activeMoveById={activeMoveById} />
     </div>
     <p className="currentEvent">{event?.messageZh}</p>
     <div className={`resultDock ${atResult ? "ready" : ""}`}>
@@ -525,6 +578,32 @@ function buildBattleFrame(playerUnits: readonly TeamSnapshotUnit[], opponentUnit
   return frame;
 }
 
+function movementCause(event: BattleEvent | undefined): unknown {
+  return event?.type === "unitMoved" ? event.metadata.causeUnitId ?? event.sourceUnitId : undefined;
+}
+
+function battleCueEndIndex(events: readonly BattleEvent[], cursor: number): number {
+  const cause = movementCause(events[cursor]);
+  if (!cause) return cursor;
+  let end = cursor;
+  while (end + 1 < events.length && events[end + 1].type === "unitMoved" && movementCause(events[end + 1]) === cause) end += 1;
+  return end;
+}
+
+function activeMovementEventsByUnitId(events: readonly BattleEvent[], cursor: number): Map<string, BattleEvent> {
+  const cause = movementCause(events[cursor]);
+  const active = new Map<string, BattleEvent>();
+  if (!cause) return active;
+  let start = cursor;
+  while (start - 1 >= 0 && events[start - 1].type === "unitMoved" && movementCause(events[start - 1]) === cause) start -= 1;
+  const end = battleCueEndIndex(events, cursor);
+  for (let index = start; index <= end; index += 1) {
+    const event = events[index];
+    if (event.sourceUnitId) active.set(event.sourceUnitId, event);
+  }
+  return active;
+}
+
 function eventDelta(event: BattleEvent): string {
   if (event.type === "damageApplied" && typeof event.amount === "number") return `-${event.amount} `;
   if (event.type === "shieldAbsorbed" && typeof event.amount === "number") return `盾-${event.amount} `;
@@ -537,33 +616,41 @@ function eventDelta(event: BattleEvent): string {
   return "";
 }
 
-function BattleQueue({ side, units, frameById, sourceId, targetId }: { side: Side; units: readonly TeamSnapshotUnit[]; frameById: Map<string, BattleFrameUnit>; sourceId?: string; targetId?: string }) {
-  const byPosition = new Map(units.map((unit) => [unit.position, unit]));
+function BattleQueue({ side, units, frameById, sourceId, targetId, activeMoveById }: { side: Side; units: readonly TeamSnapshotUnit[]; frameById: Map<string, BattleFrameUnit>; sourceId?: string; targetId?: string; activeMoveById: Map<string, BattleEvent> }) {
+  const byPosition = new Map<number, { unit: TeamSnapshotUnit; frame?: BattleFrameUnit; unitId: string }>();
+  for (const unit of units) {
+    const unitId = `${side}_${unit.snapshotUnitId}`;
+    const frame = frameById.get(unitId);
+    // Movement events mutate frame.position; snapshot position is only the initial battle layout.
+    byPosition.set(frame?.position ?? unit.position, { unit, frame, unitId });
+  }
   // Cause marker: position 0 is the front line. Player side renders 4..0 so the centerline-facing unit is front.
   const positions = side === "player" ? [4, 3, 2, 1, 0] : [0, 1, 2, 3, 4];
   return <div className={`battleQueue ${side}`}>
     <div className="teamTag">{side === "player" ? "玩家：后排 → 前排" : "对手：前排 ← 后排"}</div>
     {positions.map((position) => {
-      const unit = byPosition.get(position);
-      if (!unit) return <article className="battleSlot emptyBattleSlot" key={position}><span>{position + 1}</span></article>;
-      const unitId = `${side}_${unit.snapshotUnitId}`;
-      const frame = frameById.get(unitId);
+      const entry = byPosition.get(position);
+      if (!entry) return <article className="battleSlot emptyBattleSlot" key={position}><span>{position + 1}</span></article>;
+      const { unit, frame, unitId } = entry;
       const highlighted = sourceId === unitId || targetId === unitId;
       const source = sourceId === unitId;
       const target = targetId === unitId;
-      return <BattlePet key={unit.snapshotUnitId} unit={unit} frame={frame} side={side} highlighted={highlighted} source={source} target={target} />;
+      return <BattlePet key={unit.snapshotUnitId} unit={unit} frame={frame} side={side} highlighted={highlighted} source={source} target={target} moveEvent={activeMoveById.get(unitId)} />;
     })}
   </div>;
 }
 
-function BattlePet({ unit, frame, side, highlighted, source, target }: { unit: TeamSnapshotUnit; frame?: BattleFrameUnit; side: Side; highlighted: boolean; source: boolean; target: boolean }) {
+function BattlePet({ unit, frame, side, highlighted, source, target, moveEvent }: { unit: TeamSnapshotUnit; frame?: BattleFrameUnit; side: Side; highlighted: boolean; source: boolean; target: boolean; moveEvent?: BattleEvent }) {
   const animal = ANIMAL_BY_ID[unit.speciesId];
   const shownAttack = frame?.attack ?? unit.initialAttack;
   const shownHealth = Math.max(0, frame?.health ?? unit.initialMaxHealth);
   const maxHealth = frame?.maxHealth ?? unit.initialMaxHealth;
   const shield = frame?.shield ?? 0;
   const retreated = frame?.retreated;
-  return <article className={`battlePet battleSlot ${side} ${highlighted ? "highlighted" : ""} ${source ? "source" : ""} ${target ? "target" : ""} ${retreated ? "retreated" : ""}`}>
+  const before = typeof moveEvent?.before === "number" ? moveEvent.before : undefined;
+  const after = typeof moveEvent?.after === "number" ? moveEvent.after : undefined;
+  const moveClass = before !== undefined && after !== undefined ? after > before ? "movedBack" : after < before ? "movedForward" : "" : "";
+  return <article className={`battlePet battleSlot ${side} ${highlighted ? "highlighted" : ""} ${source ? "source" : ""} ${target ? "target" : ""} ${moveEvent ? "moved" : ""} ${moveClass} ${retreated ? "retreated" : ""}`}>
     <div className="levelPip">Lv{unit.level}</div>
     {unit.equipmentEffect && <div className="equipPip">装</div>}
     <div className="petGlyph">{animal.visual.emoji || animal.visual.fallbackGlyph}</div>

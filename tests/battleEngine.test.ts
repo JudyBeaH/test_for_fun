@@ -79,7 +79,7 @@ describe("v0.2 battle engine", () => {
     const result = resolveBattle(input(snap(["frog", "weasel"]), snap(["mussel"]), 14));
     const moved = result.events.filter((event) => event.type === "unitMoved" && event.metadata.causeUnitId === "player_frog_0");
 
-    expect(moved.map((event) => event.sourceUnitId)).toEqual(expect.arrayContaining(["player_frog_0", "player_weasel_1"]));
+    expect(moved.map((event) => event.sourceUnitId)).toEqual(["player_frog_0", "player_weasel_1"]);
     expect(moved.find((event) => event.sourceUnitId === "player_frog_0")?.after).toBe(1);
     expect(moved.find((event) => event.sourceUnitId === "player_weasel_1")?.after).toBe(0);
   });

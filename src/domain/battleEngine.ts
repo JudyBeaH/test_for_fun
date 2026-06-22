@@ -220,9 +220,12 @@ function applyEffect(effect: EffectDef, source: BattleUnit, player: BattleUnit[]
     const positions = allies.map((unit) => unit.position).sort((a, b) => a - b);
     reordered.forEach((unit, index) => { unit.position = positions[index]; });
     ctx.contribution.byUnitId[source.unitId].usefulMoves += 1;
-    for (const unit of reordered) {
+    const movedUnits = reordered
+      .filter((unit) => beforePositions.get(unit.unitId) !== undefined && beforePositions.get(unit.unitId) !== unit.position)
+      .sort((a, b) => Number(b.unitId === source.unitId) - Number(a.unitId === source.unitId));
+    for (const unit of movedUnits) {
       const before = beforePositions.get(unit.unitId);
-      if (before === undefined || before === unit.position) continue;
+      if (before === undefined) continue;
       const isSource = unit.unitId === source.unitId;
       addEvent(ctx, {
         type: "unitMoved",
