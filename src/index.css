@@ -99,6 +99,19 @@ small { color: #5d6d61; }
   display: grid;
   gap: 0.45rem;
 }
+.discoveryCards {
+  display: grid;
+  gap: 0.45rem;
+}
+.discoveryGrid {
+  grid-template-columns: repeat(4, minmax(104px, 1fr));
+}
+.supplyChoice {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  text-align: left;
+}
 .pendingActions, .pendingReplaceGrid {
   display: flex;
   flex-wrap: wrap;
@@ -157,8 +170,10 @@ small { color: #5d6d61; }
 .selectedMember { outline: 3px solid #3b6eea; background: #eef4ff; }
 .selectedSlot { outline: 3px dashed #b16b00; background: #fff7e8; }
 .selectedOffer { outline: 3px solid #1d8f67; background: #edf9f3; }
-.dropTarget { position: relative; }
-.draggingCamp .dropTarget::after {
+.clickSource { outline: 3px solid #234ea5; background: #eef4ff; }
+.legalClickTarget { box-shadow: inset 0 0 0 3px #1d8f67; background: #edf9f3; }
+.unitDropTarget { position: relative; }
+.draggingCamp .unitDropTarget::after {
   content: "松开放置";
   position: absolute;
   inset: 4px;
@@ -172,9 +187,20 @@ small { color: #5d6d61; }
   pointer-events: none;
 }
 .draggingCamp .offer,
-.draggingCamp .selectCard {
+.draggingCamp .selectCard,
+.draggingCamp .releaseZone {
   cursor: grabbing;
 }
+.releaseZone {
+  width: 100%;
+  display: grid;
+  justify-items: start;
+  align-content: center;
+  gap: 0.15rem;
+  border-style: dashed;
+  background: #fff7e8;
+}
+.releaseZone small { color: #6a4a00; }
 .selectCard {
   width: 100%;
   height: auto;
@@ -526,5 +552,5 @@ small { color: #5d6d61; }
   .offerGrid { grid-template-columns: repeat(5, minmax(84px, 1fr)); }
   .pendingReplaceGrid { grid-template-columns: 1fr; }
   .glyph { width: 34px; height: 34px; font-size: 1.15rem; }
-  button { min-height: 38px; padding: 0.3rem 0.45rem; }
+  button { min-height: 44px; padding: 0.3rem 0.45rem; }
 }

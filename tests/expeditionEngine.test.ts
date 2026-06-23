@@ -19,6 +19,18 @@ function place(state: ExpeditionState, member: TeamMember, slot = 0): void {
   state.formation[slot as 0 | 1 | 2 | 3 | 4] = member.instanceId;
 }
 
+function member(instanceId: string, speciesId: TeamMember["speciesId"]): TeamMember {
+  return { instanceId, speciesId, bondXp: 1, permanentAttackBonus: 0, permanentHealthBonus: 0, equipment: null, timedStatuses: [], acquiredAtRound: 1, participatedRounds: 0 };
+}
+
+function winningTerminalExpedition(seed = 20260620): ExpeditionState {
+  const state = createExpedition(seed);
+  state.badges = 9;
+  place(state, { ...member("closer", "weasel"), bondXp: 6, permanentAttackBonus: 100, permanentHealthBonus: 100 });
+  const settled = resolvePreparedBattle(prepareBattle(state).state).state;
+  return finishBattleReport(settled);
+}
+
 describe("save schema and battle resume", () => {
   it("校验 v2 存档并拒绝旧形状", () => {
     expect(validateSave(createEmptySave())).toBe(true);
@@ -61,6 +73,62 @@ describe("save schema and battle resume", () => {
     expect(migrated?.activeExpedition?.inventory).toEqual(["i1", null, null]);
     expect(migrated?.activeExpedition?.unitsById.t1.speciesId).toBe("frog");
     expect(migrated?.activeExpedition?.itemsById.i1.itemId).toBe("pinecone_sling");
+  });
+
+  it("migrates full legacy reserve and inventory fixtures without changing order or ids", () => {
+    const legacy = createEmptySave() as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 2;
+    legacy.activeExpedition = {
+      ...createExpedition(78),
+      team: [member("t0", "frog"), member("t1", "hare"), null, member("t3", "otter"), member("t4", "crow")],
+      reserve: [member("r0", "egret"), member("r1", "weasel"), member("r2", "mussel")],
+      inventory: [
+        { instanceId: "i0", itemId: "red_berry" },
+        { instanceId: "i1", itemId: "river_moss" },
+        { instanceId: "i2", itemId: "pinecone_sling" },
+      ],
+      unitsById: undefined,
+      itemsById: undefined,
+      formation: undefined,
+    };
+
+    const migrated = migrateSave(legacy);
+    const remigrated = migrateSave(migrated);
+
+    expect(migrated?.activeExpedition?.formation).toEqual(["t0", "t1", null, "t3", "t4"]);
+    expect(migrated?.activeExpedition?.reserve).toEqual(["r0", "r1", "r2"]);
+    expect(migrated?.activeExpedition?.inventory).toEqual(["i0", "i1", "i2"]);
+    expect(Object.keys(migrated?.activeExpedition?.unitsById ?? {})).toEqual(["t0", "t1", "t3", "t4", "r0", "r1", "r2"]);
+    expect(remigrated).toEqual(migrated);
+  });
+
+  it("migrates partial legacy expedition fields into fixed empty slots", () => {
+    const legacy = createEmptySave() as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 2;
+    legacy.activeExpedition = {
+      ...createExpedition(79),
+      team: [member("solo", "frog")],
+      reserve: undefined,
+      inventory: undefined,
+      unitsById: undefined,
+      itemsById: undefined,
+      formation: undefined,
+    };
+
+    const migrated = migrateSave(legacy);
+
+    expect(migrated?.activeExpedition?.formation).toEqual(["solo", null, null, null, null]);
+    expect(migrated?.activeExpedition?.reserve).toEqual([null, null, null]);
+    expect(migrated?.activeExpedition?.inventory).toEqual([null, null, null]);
+    expect(migrated?.activeExpedition?.unitsById.solo.instanceId).toBe("solo");
+  });
+
+  it("backs up unreadable saves and returns a clean save", () => {
+    const storage = memoryStorage({ wildtrail_save: "{\"schemaVersion\":3" });
+    const loaded = loadTransactional(storage);
+    expect(loaded.schemaVersion).toBe(3);
+    expect(loaded.saveRevision).toBe(0);
+    expect(storage.data.wildtrail_corrupt_backup).toBe("{\"schemaVersion\":3");
   });
 
   it("prepared 战斗恢复后同一结果，已结算不重复加章", () => {
@@ -108,5 +176,43 @@ describe("save schema and battle resume", () => {
     expect(completed.state.registeredTeam.name).toBe("第十胜队伍");
     expect(completed.state.savePatch.collection.weasel.adopted).toBe(true);
     expect(JSON.stringify(completed.state.registeredTeam)).not.toContain("shield");
+  });
+
+  it("rejects invalid success resolution inputs and prevents duplicate terminal registration", () => {
+    const terminal = winningTerminalExpedition(20260621);
+    const save = createEmptySave();
+    const rewards = createRewardChoices(terminal, save, terminal.expeditionSeed).slice(0, 2);
+
+    expect(completeSuccessResolution({
+      save: { ...save, activeExpedition: { ...terminal, pendingBattle: { battleId: "ghost", status: "resolved", input: terminal.finalVictoryRecord!.input, output: terminal.finalVictoryRecord!.output, settlementApplied: true, playbackCursor: 0 } } },
+      expedition: { ...terminal, pendingBattle: { battleId: "ghost", status: "resolved", input: terminal.finalVictoryRecord!.input, output: terminal.finalVictoryRecord!.output, settlementApplied: true, playbackCursor: 0 } },
+      adoptedSpeciesId: "weasel",
+      rewardChoices: rewards,
+      teamName: "ghost",
+      createdAtIso: "2026-06-21T00:00:00.000Z",
+    }).ok).toBe(false);
+    expect(completeSuccessResolution({ save, expedition: terminal, adoptedSpeciesId: "frog", rewardChoices: rewards, teamName: "bad adopt", createdAtIso: "2026-06-21T00:00:00.000Z" }).ok).toBe(false);
+    expect(completeSuccessResolution({ save, expedition: terminal, adoptedSpeciesId: "weasel", rewardChoices: [rewards[0], rewards[0]], teamName: "bad rewards", createdAtIso: "2026-06-21T00:00:00.000Z" }).ok).toBe(false);
+
+    const first = completeSuccessResolution({
+      save,
+      expedition: terminal,
+      adoptedSpeciesId: "weasel",
+      rewardChoices: rewards,
+      teamName: "",
+      createdAtIso: "2026-06-21T00:00:00.000Z",
+    });
+    expect(first.ok).toBe(true);
+    expect(first.state.registeredTeam.name).toBe("江南湿地探险队 #1");
+
+    const duplicate = completeSuccessResolution({
+      save: { ...save, registeredTeams: first.state.savePatch.registeredTeams },
+      expedition: terminal,
+      adoptedSpeciesId: "weasel",
+      rewardChoices: rewards,
+      teamName: "same final battle",
+      createdAtIso: "2026-06-21T00:00:01.000Z",
+    });
+    expect(duplicate.ok).toBe(false);
   });
 });

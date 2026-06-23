@@ -342,6 +342,9 @@ export type CampCommand =
   | { type: "purchaseAndApplyItem"; offerId: OfferId; target: ItemTarget; expectedRevision?: number }
   | { type: "applyInventoryItem"; itemInstanceId: ItemInstanceId; target: ItemTarget; discardOld?: boolean; expectedRevision?: number }
   | { type: "chooseDiscovery"; discoveryId: string; speciesId: SpeciesId; expectedRevision?: number }
+  | { type: "chooseDiscoveryToSlot"; discoveryId: string; speciesId: SpeciesId; to: UnitSlotRef; expectedRevision?: number }
+  | { type: "chooseDiscoveryAndMerge"; discoveryId: string; speciesId: SpeciesId; targetUnitId: UnitId; expectedRevision?: number }
+  | { type: "chooseDiscoverySupply"; discoveryId: string; expectedRevision?: number }
   | { type: "discardPendingRecruit"; expectedRevision?: number }
   | { type: "placePendingRecruit"; to: UnitSlotRef; replaceUnitId?: UnitId; expectedRevision?: number };
 

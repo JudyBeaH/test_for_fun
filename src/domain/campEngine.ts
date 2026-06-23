@@ -289,6 +289,19 @@ function insertUnit(state: ExpeditionState, unit: TeamMember, to: UnitSlotRef): 
   setUnitAt(state, to, unit.instanceId);
 }
 
+function insertFormationUnit(state: ExpeditionState, unitId: UnitId, toSlot: 0 | 1 | 2 | 3 | 4): void {
+  const sourceIndex = state.formation.findIndex((id) => id === unitId);
+  if (sourceIndex < 0) throw new Error("来源位置无效。");
+  if (sourceIndex === toSlot) return;
+  if (sourceIndex < toSlot) {
+    for (let index = sourceIndex; index < toSlot; index += 1) state.formation[index as 0 | 1 | 2 | 3] = state.formation[index + 1 as 1 | 2 | 3 | 4];
+    state.formation[toSlot] = unitId;
+    return;
+  }
+  for (let index = sourceIndex; index > toSlot; index -= 1) state.formation[index as 1 | 2 | 3 | 4] = state.formation[index - 1 as 0 | 1 | 2 | 3];
+  state.formation[toSlot] = unitId;
+}
+
 function generateDiscoveries(state: ExpeditionState, source: TeamMember, beforeLevel: 1 | 2 | 3, afterLevel: 1 | 2 | 3): UpgradeDiscovery[] {
   const rules = computeCampRules(state);
   const discoveries: UpgradeDiscovery[] = [];
@@ -388,10 +401,23 @@ function validateUnitSlot(ref: UnitSlotRef, rules: ComputedCampRules): string | 
   return null;
 }
 
+function takeDiscovery(state: ExpeditionState, discoveryId: string, speciesId?: SpeciesId): UpgradeDiscovery {
+  const index = state.pendingDiscoveries.findIndex((discovery) => discovery.discoveryId === discoveryId);
+  if (index < 0) throw new Error("没有这个高级发现。");
+  const discovery = state.pendingDiscoveries[index];
+  if (speciesId && !discovery.candidates.includes(speciesId)) throw new Error("候选动物无效。");
+  state.pendingDiscoveries.splice(index, 1);
+  return discovery;
+}
+
+function phaseAfterDiscoveryChoice(state: ExpeditionState): ExpeditionState["phase"] {
+  return state.pendingDiscoveries.length || state.pendingRecruit ? "upgradeDiscovery" : "camp";
+}
+
 function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand): string {
   const rules = computeCampRules(next);
   const camp = next.camp;
-  const upgradeDiscoveryCommands = new Set<CampCommand["type"]>(["chooseDiscovery", "placePendingRecruit", "discardPendingRecruit", "releaseUnit"]);
+  const upgradeDiscoveryCommands = new Set<CampCommand["type"]>(["chooseDiscovery", "chooseDiscoveryToSlot", "chooseDiscoveryAndMerge", "chooseDiscoverySupply", "placePendingRecruit", "discardPendingRecruit", "releaseUnit", "moveUnit", "mergeUnits"]);
   if (next.phase !== "camp" && (next.phase !== "upgradeDiscovery" || !upgradeDiscoveryCommands.has(command.type))) throw new Error("当前阶段不能执行营地操作。");
   if (!camp && command.type !== "placePendingRecruit" && command.type !== "discardPendingRecruit") throw new Error("尚未进入营地。");
 
@@ -421,8 +447,12 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
     if (invalid) throw new Error(invalid);
     const sourceSlot = findUnitSlot(next, command.unitId);
     if (!sourceSlot || !next.unitsById[command.unitId]) throw new Error("来源位置无效。");
-    const targetUnitId = unitAt(next, command.to);
     if (sourceSlot.zone === command.to.zone && sourceSlot.slot === command.to.slot) return "队列未变化。";
+    const targetUnitId = unitAt(next, command.to);
+    if (sourceSlot.zone === "formation" && command.to.zone === "formation" && targetUnitId) {
+      insertFormationUnit(next, command.unitId, command.to.slot);
+      return "队列已调整。";
+    }
     setUnitAt(next, sourceSlot, targetUnitId);
     setUnitAt(next, command.to, command.unitId);
     return "队列已调整。";
@@ -525,20 +555,48 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
   }
 
   if (command.type === "chooseDiscovery") {
-    const index = next.pendingDiscoveries.findIndex((discovery) => discovery.discoveryId === command.discoveryId);
-    if (index < 0) throw new Error("没有这个高级发现。");
-    const discovery = next.pendingDiscoveries[index];
-    if (!discovery.candidates.includes(command.speciesId)) throw new Error("候选动物无效。");
+    const discovery = takeDiscovery(next, command.discoveryId, command.speciesId);
     next.pendingRecruit = createMember(command.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, Object.keys(next.unitsById).length + 1);
-    next.pendingDiscoveries.splice(index, 1);
     next.phase = "upgradeDiscovery";
     return "请选择把新伙伴放入战斗队或替补。";
+  }
+
+  if (command.type === "chooseDiscoveryToSlot") {
+    const invalid = validateUnitSlot(command.to, rules);
+    if (invalid) throw new Error(invalid);
+    if (unitAt(next, command.to)) throw new Error(command.to.zone === "formation" ? "目标战斗位已有动物。" : "目标替补位已有动物。");
+    const discovery = takeDiscovery(next, command.discoveryId, command.speciesId);
+    const member = createMember(command.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, Object.keys(next.unitsById).length + 1);
+    insertUnit(next, member, command.to);
+    next.phase = phaseAfterDiscoveryChoice(next);
+    return "高级发现伙伴已加入。";
+  }
+
+  if (command.type === "chooseDiscoveryAndMerge") {
+    const target = getOwnedUnit(next, command.targetUnitId);
+    if (!target) throw new Error("没有找到合成目标。");
+    if (target.speciesId !== command.speciesId) throw new Error("只能拖到同物种单位上合成。");
+    const discovery = takeDiscovery(next, command.discoveryId, command.speciesId);
+    const member = createMember(command.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, Object.keys(next.unitsById).length + 1);
+    const merge = mergeMembers(next, member, target);
+    if (!merge.ok) throw new Error(merge.messageZh);
+    next.stats.merges += 1;
+    next.phase = phaseAfterDiscoveryChoice(next);
+    return "高级发现伙伴已合成。";
+  }
+
+  if (command.type === "chooseDiscoverySupply") {
+    takeDiscovery(next, command.discoveryId);
+    if (!camp) throw new Error("没有营地。");
+    camp.supply += 1;
+    next.phase = phaseAfterDiscoveryChoice(next);
+    return "已获得 1 点补给。";
   }
 
   if (command.type === "discardPendingRecruit") {
     if (!next.pendingRecruit) throw new Error("没有待安置的新伙伴。");
     next.pendingRecruit = null;
-    next.phase = next.pendingDiscoveries.length ? "upgradeDiscovery" : "camp";
+    next.phase = phaseAfterDiscoveryChoice(next);
     return "已告别待安置伙伴。";
   }
 
@@ -552,7 +610,7 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
     if (command.replaceUnitId) delete next.unitsById[command.replaceUnitId];
     insertUnit(next, next.pendingRecruit, target);
     next.pendingRecruit = null;
-    next.phase = next.pendingDiscoveries.length ? "upgradeDiscovery" : "camp";
+    next.phase = phaseAfterDiscoveryChoice(next);
     return "高级发现伙伴已安置。";
   }
 
@@ -568,6 +626,13 @@ export function applyCampCommand(state: ExpeditionState, command: CampCommand): 
   } catch (error) {
     return { ok: false, state: { state, command }, messageZh: error instanceof Error ? error.message : "营地操作失败。" };
   }
+}
+
+export function preflightMoveUnitToEmptySlot(state: ExpeditionState, unitId: UnitId, to: UnitSlotRef): DomainResult<CampCommand> {
+  if (unitAt(state, to)) return { ok: false, state: { type: "moveUnit", unitId, to }, messageZh: to.zone === "formation" ? "目标战斗位已有动物。" : "目标替补位已有动物。" };
+  const command: CampCommand = { type: "moveUnit", unitId, to };
+  const result = applyCampCommand(state, command);
+  return result.ok ? { ok: true, state: command, messageZh: result.messageZh } : { ok: false, state: command, messageZh: result.messageZh };
 }
 
 function releaseRefundForLevel(level: 1 | 2 | 3): number {

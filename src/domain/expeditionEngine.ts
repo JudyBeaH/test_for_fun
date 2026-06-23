@@ -181,6 +181,9 @@ export function completeSuccessResolution(input: SuccessResolutionInput): Domain
   if (rewardChoices.length !== 2) {
     return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "请选择两项成功纪念。" };
   }
+  if (save.registeredTeams.some((team) => team.sourceRunId === expedition.runId && team.sourceBattleId === record.battleId)) {
+    return { ok: false, state: undefined as unknown as { savePatch: SuccessResolutionSavePatch; registeredTeam: RegisteredTeam }, messageZh: "这支成功队伍已经登记过。" };
+  }
   const legalRewards = createRewardChoices(expedition, save, expedition.expeditionSeed);
   const legalIds = new Set(legalRewards.map((choice) => choice.id));
   const chosenIds = rewardChoices.map((choice) => choice.id);
