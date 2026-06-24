@@ -159,6 +159,19 @@ small { color: #5d6d61; }
 .selectedOffer { outline: 3px solid #1d8f67; background: #edf9f3; }
 .clickSource { outline: 3px solid #234ea5; background: #eef4ff; }
 .legalClickTarget { box-shadow: inset 0 0 0 3px #1d8f67; background: #edf9f3; }
+.itemAffectedTarget { box-shadow: inset 0 0 0 3px #a87913; background: #fff8df; }
+.itemReplacementTarget { box-shadow: inset 0 0 0 3px #b04428; background: #fff0e8; }
+.itemPreviewBadge {
+  display: inline-flex;
+  margin-top: 0.28rem;
+  border-radius: 999px;
+  background: #7c5a00;
+  color: white;
+  padding: 0.08rem 0.38rem;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+.itemReplacementTarget .itemPreviewBadge { background: #a43b22; }
 .unitDropTarget { position: relative; }
 .draggingCamp .unitDropTarget::after {
   content: "松开放置";
@@ -187,6 +200,16 @@ small { color: #5d6d61; }
   border-style: dashed;
   background: #fff7e8;
 }
+.itemTeamDropZone {
+  width: 100%;
+  display: grid;
+  justify-items: start;
+  align-content: center;
+  gap: 0.15rem;
+  border-color: #a87913;
+  background: #fff8df;
+}
+.itemTeamDropZone small { color: #6a4a00; }
 .releaseZone small { color: #6a4a00; }
 .selectCard {
   width: 100%;
@@ -214,6 +237,8 @@ small { color: #5d6d61; }
 .selectedMemberPanel { border-color: #3b6eea; }
 .selectedOfferPanel { border-color: #1d8f67; }
 .selectedSlotPanel { border-color: #b16b00; }
+.itemPreviewPanel { border-color: #a87913; }
+.itemPreviewPanel.previewInvalid { border-color: #b04428; background: #fff0e8; }
 .avatarBlock {
   display: grid;
   gap: 0.12rem;

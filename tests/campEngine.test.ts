@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyCampCommand, assertCampInvariants, computeCampRules, enterCamp, formationMembers, inventoryItems, preflightMoveUnitToEmptySlot, reserveMembers } from "../src/domain/campEngine";
+import { applyCampCommand, assertCampInvariants, computeCampRules, createMember, enterCamp, formationMembers, inventoryItems, preflightMoveUnitToEmptySlot, reserveMembers } from "../src/domain/campEngine";
 import { createExpedition } from "../src/domain/expeditionEngine";
+import { makeId } from "../src/domain/ids";
 import type { CampCommand, ExpeditionState, ItemInstanceId, SpeciesId, TeamMember, UnitSlotRef } from "../src/domain/types";
 
 function testMember(instanceId: string, speciesId: SpeciesId, bondXp = 1): TeamMember {
@@ -197,6 +198,26 @@ describe("P2 fixed camp slots and atomic commands", () => {
     expectAtomicFailure(state, { type: "chooseDiscoveryAndMerge", discoveryId: "discovery_1", speciesId: "frog", targetUnitId: "hare_target" });
     expect(state.pendingDiscoveries).toHaveLength(1);
     expect(state.unitsById.hare_target.bondXp).toBe(1);
+  });
+
+  it("does not reuse an existing unit id when a 3/6 merge triggers discovery placement", () => {
+    let state = createExpedition(62);
+    state.camp!.supply = 0;
+    const discoveryId = makeId("discovery", state.expeditionSeed + state.round, 0);
+    const seed = state.expeditionSeed + discoveryId.length;
+    placeUnit(state, testMember("source", "frog", 3), { zone: "formation", slot: 0 });
+    placeUnit(state, testMember("target", "frog", 3), { zone: "formation", slot: 1 });
+    placeUnit(state, createMember("hare", seed, state.round, 3), { zone: "formation", slot: 2 });
+
+    state = ok(state, { type: "mergeUnits", sourceUnitId: "source", targetUnitId: "target" });
+    expect(state.phase).toBe("upgradeDiscovery");
+    expect(state.pendingDiscoveries).toHaveLength(1);
+
+    const discovery = state.pendingDiscoveries[0];
+    state = ok(state, { type: "chooseDiscoveryToSlot", discoveryId: discovery.discoveryId, speciesId: discovery.candidates[0], to: { zone: "formation", slot: 3 } });
+
+    expect(ownedIds(state)).toHaveLength(new Set(ownedIds(state)).size);
+    expect(state.formation[2]).not.toBe(state.formation[3]);
   });
 
   it("allows moving, merging, and releasing existing animals while upgrade discovery is pending", () => {

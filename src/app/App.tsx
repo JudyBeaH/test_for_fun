@@ -7,11 +7,11 @@ import { applyCampCommand, computeCampRules, formationMembers, inventoryItems, m
 import { decodeChallengeCode, encodeChallengeCode } from "../domain/challengeCode";
 import { completeSuccessResolution, createExpedition, finishBattleReport, prepareBattle, resolvePreparedBattle } from "../domain/expeditionEngine";
 import { applyChallengeReward, applyRewardChoice, createRewardChoices } from "../domain/rewardEngine";
-import type { AppSave, BattleEvent, BattleOutput, CampCommand, ExpeditionState, ItemId, RegisteredTeam, RewardChoice, Side, SpeciesId, TeamMember, TeamSnapshotUnit, UnitSlotRef } from "../domain/types";
+import type { AppSave, BattleEvent, BattleOutput, CampCommand, ExpeditionState, ItemId, ItemTargetPreview, RegisteredTeam, RewardChoice, Side, SpeciesId, TeamMember, TeamSnapshotUnit, UnitSlotRef } from "../domain/types";
 import { resolveBattle } from "../domain/battleEngine";
 import { exportSave, importSaveJson, loadSave, saveAppSave, resetSave, stagingInfo, clearStaging } from "../storage/localRepository";
 import { createDropRegistry } from "./interaction/dropRegistry";
-import { buildCampClickCommand, buildCampDragCommand, campClickSourceAfterKey, preflightCampClickTarget, preflightCampDragCommand } from "./interaction/campDragMapping";
+import { buildCampClickCommand, buildCampDragCommand, campClickSourceAfterKey, preflightCampClickTarget, preflightCampDragCommand, resolveCampItemPreview } from "./interaction/campDragMapping";
 import { usePointerDragController } from "./interaction/usePointerDragController";
 import type { DropRegistry } from "./interaction/dropRegistry";
 import type { CampDragPayload, CampDropTarget } from "./interaction/gestureTypes";
@@ -234,6 +234,8 @@ function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: E
     onRejected: (messageZh) => onInvalidDrop(invalidDropReason.current ?? messageZh),
   });
   const dragging = dragController.dragState.phase === "dragging";
+  const activePayload = dragging ? dragController.dragState.payload : clickSource;
+  const activeItemPreview = resolveCampItemPreview(expedition, activePayload);
   const selectedMember = selected?.kind === "member" ? [...formation, ...reserve].find((member) => member?.instanceId === selected.instanceId) ?? undefined : undefined;
   const selectedAnimalOffer = selected?.kind === "animalOffer" ? camp.animalOffers.find((slot) => slot.offer?.offerInstanceId === selected.slotId) : undefined;
   const selectedItemOffer = selected?.kind === "itemOffer" ? camp.itemOffers.find((slot) => slot.offer?.offerInstanceId === selected.slotId) : undefined;
@@ -277,10 +279,14 @@ function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: E
     return preflightCampClickTarget(expedition, clickSource, target).ok;
   }
 
+  function itemPreviewForTarget(target: CampDropTarget): ItemTargetPreview | null {
+    return resolveCampItemPreview(expedition, activePayload, target);
+  }
+
   return <section className={`screen campLayout ${dragging ? "draggingCamp" : ""}`} onContextMenu={(event) => event.preventDefault()}>
     <aside className="sideRail">
       <h2>替补 Zzz</h2>
-      <SlotList members={reserve} area="reserve" clickSource={clickSource} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
+      <SlotList members={reserve} area="reserve" activeItemPreview={activeItemPreview} clickSource={clickSource} isLegalClickTarget={isLegalClickTarget} itemPreviewForTarget={itemPreviewForTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
       <h2>仓库</h2>
       <InventoryList clickSource={clickSource} inventory={inventory} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
     </aside>
@@ -289,7 +295,7 @@ function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: E
       {expedition.pendingDiscoveries[0] && <Discovery clickSource={clickSource} discovery={expedition.pendingDiscoveries[0]} onAction={onAction} onBeginClickSource={beginClickSource} sourceHandlers={dragController.sourceHandlers} />}
       {expedition.pendingRecruit && <PendingRecruit clickSource={clickSource} member={expedition.pendingRecruit} onBeginClickSource={beginClickSource} sourceHandlers={dragController.sourceHandlers} />}
       <h2>战斗队：后排 → 前排（领域前排为索引 0）</h2>
-      <SlotList members={formation} area="team" clickSource={clickSource} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
+      <SlotList members={formation} area="team" activeItemPreview={activeItemPreview} clickSource={clickSource} isLegalClickTarget={isLegalClickTarget} itemPreviewForTarget={itemPreviewForTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
       <h2>动物邂逅</h2>
       <div className="offerGrid">{camp.animalOffers.map((slot) => {
         const payload: CampDragPayload | null = slot.offer ? { kind: "animalOffer", offerId: slot.offer.offerInstanceId } : null;
@@ -306,13 +312,15 @@ function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: E
     <aside className="actionsPanel">
       <button onClick={() => onAction({ type: "refresh" })}>刷新</button>
       <button className="primary" onClick={onDepart}>出发</button>
+      {activeItemPreview?.targetSpec.kind === "allOwned" && <ItemTeamDropZone dropRegistry={dropRegistry} legalTarget={clickSource ? isLegalClickTarget({ kind: "itemTeamTarget" }) : Boolean(activeItemPreview.ok)} onClickTarget={() => clickTarget({ kind: "itemTeamTarget" })} preview={activeItemPreview} />}
       <ReleaseZone dropRegistry={dropRegistry} legalTarget={clickSource ? isLegalClickTarget({ kind: "releaseZone" }) : false} onClickTarget={() => clickTarget({ kind: "releaseZone" })} />
+      {activeItemPreview && <ItemPreviewPanel preview={activeItemPreview} />}
       <SelectionDetails selected={selected} member={selectedMember ?? undefined} animalOffer={selectedAnimalOffer} itemOffer={selectedItemOffer} />
     </aside>
   </section>;
 }
 
-function SlotList({ members, area, clickSource, isLegalClickTarget, onBeginClickSource, onClickTarget, selected, onSelect, dropRegistry, sourceHandlers }: { members: Array<TeamMember | null>; area: "team" | "reserve"; clickSource: CampDragPayload | null; isLegalClickTarget: (target: CampDropTarget) => boolean; onBeginClickSource: (payload: CampDragPayload) => void; onClickTarget: (target: CampDropTarget) => boolean; selected: SelectedFocus | null; onSelect: (focus: SelectedFocus) => void; dropRegistry: DropRegistry<CampDropTarget>; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
+function SlotList({ members, area, activeItemPreview, clickSource, isLegalClickTarget, itemPreviewForTarget, onBeginClickSource, onClickTarget, selected, onSelect, dropRegistry, sourceHandlers }: { members: Array<TeamMember | null>; area: "team" | "reserve"; activeItemPreview: ItemTargetPreview | null; clickSource: CampDragPayload | null; isLegalClickTarget: (target: CampDropTarget) => boolean; itemPreviewForTarget: (target: CampDropTarget) => ItemTargetPreview | null; onBeginClickSource: (payload: CampDragPayload) => void; onClickTarget: (target: CampDropTarget) => boolean; selected: SelectedFocus | null; onSelect: (focus: SelectedFocus) => void; dropRegistry: DropRegistry<CampDropTarget>; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
   const unregisterById = useRef(new Map<string, () => void>());
   useEffect(() => () => {
     for (const unregister of unregisterById.current.values()) unregister();
@@ -340,8 +348,12 @@ function SlotList({ members, area, clickSource, isLegalClickTarget, onBeginClick
     const positionLabel = area === "team" ? index === 0 ? "前排" : index === 4 ? "后排" : `${index + 1}位` : "替补";
     const target: CampDropTarget = { kind: "unitSlot", ref: toUnitSlotRef(area, index) };
     const legalTarget = clickSource ? isLegalClickTarget(target) : false;
+    const targetPreview = member ? itemPreviewForTarget(target) : null;
+    const previewUnitIds = new Set(activeItemPreview?.ok ? activeItemPreview.targetUnitIds : []);
+    const itemAffected = Boolean(member && ((targetPreview?.ok && targetPreview.targetUnitIds.includes(member.instanceId)) || previewUnitIds.has(member.instanceId)));
+    const replacesEquipment = Boolean(member && targetPreview?.ok && targetPreview.replacedEquipmentUnitIds.includes(member.instanceId));
     const sourceClass = member && clickSource?.kind === "ownedUnit" && clickSource.unitId === member.instanceId ? "clickSource" : "";
-    return <article key={index} ref={(element) => registerSlot(element, index)} className={`animalSlot unitDropTarget ${sourceClass} ${legalTarget ? "legalClickTarget" : ""} ${selectedMember ? "selectedMember" : ""} ${selectedSlot ? "selectedSlot" : ""}`}><small className="slotPositionLabel">{positionLabel}</small>{member ? <div className="selectCard" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; onBeginClickSource({ kind: "ownedUnit", unitId: member.instanceId }); onSelect({ kind: "member", instanceId: member.instanceId }); }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); if (onClickTarget(target)) return; onBeginClickSource({ kind: "ownedUnit", unitId: member.instanceId }); onSelect({ kind: "member", instanceId: member.instanceId }); }} {...sourceHandlers({ kind: "ownedUnit", unitId: member.instanceId })}><AnimalAvatar speciesId={member.speciesId} member={member} reserve={area === "reserve"} /></div> : <div className="emptySlotButton" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; onSelect({ kind: "slot", area, index }); }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); if (onClickTarget(target)) return; onSelect({ kind: "slot", area, index }); }}>空位</div>}</article>;
+    return <article key={index} ref={(element) => registerSlot(element, index)} className={`animalSlot unitDropTarget ${sourceClass} ${legalTarget ? "legalClickTarget" : ""} ${itemAffected ? "itemAffectedTarget" : ""} ${replacesEquipment ? "itemReplacementTarget" : ""} ${selectedMember ? "selectedMember" : ""} ${selectedSlot ? "selectedSlot" : ""}`}><small className="slotPositionLabel">{positionLabel}</small>{member ? <div className="selectCard" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; onBeginClickSource({ kind: "ownedUnit", unitId: member.instanceId }); onSelect({ kind: "member", instanceId: member.instanceId }); }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); if (onClickTarget(target)) return; onBeginClickSource({ kind: "ownedUnit", unitId: member.instanceId }); onSelect({ kind: "member", instanceId: member.instanceId }); }} {...sourceHandlers({ kind: "ownedUnit", unitId: member.instanceId })}><AnimalAvatar speciesId={member.speciesId} member={member} reserve={area === "reserve"} />{itemAffected && <span className="itemPreviewBadge">{replacesEquipment ? "替换装备" : "将受影响"}</span>}</div> : <div className="emptySlotButton" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; onSelect({ kind: "slot", area, index }); }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); if (onClickTarget(target)) return; onSelect({ kind: "slot", area, index }); }}>空位</div>}</article>;
   })}</div>;
 }
 
@@ -371,6 +383,28 @@ function InventoryList({ clickSource, inventory, isLegalClickTarget, onBeginClic
   })}</div>;
 }
 
+function ItemTeamDropZone({ dropRegistry, legalTarget, onClickTarget, preview }: { dropRegistry: DropRegistry<CampDropTarget>; legalTarget: boolean; onClickTarget: () => boolean; preview: ItemTargetPreview }) {
+  const unregister = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    unregister.current?.();
+    unregister.current = null;
+  }, []);
+  function register(element: HTMLElement | null): void {
+    unregister.current?.();
+    unregister.current = null;
+    if (!element) return;
+    unregister.current = dropRegistry.register({
+      id: "item-team-target",
+      target: { kind: "itemTeamTarget" },
+      getBounds: () => element.getBoundingClientRect(),
+    });
+  }
+  return <button ref={register} className={`itemTeamDropZone unitDropTarget ${legalTarget ? "legalClickTarget" : ""}`} onClick={() => { onClickTarget(); }}>
+    <strong>整队投放</strong>
+    <small>{preview.ok ? `影响 ${preview.targetUnitIds.length} 只` : preview.messageZh}</small>
+  </button>;
+}
+
 function ReleaseZone({ dropRegistry, legalTarget, onClickTarget }: { dropRegistry: DropRegistry<CampDropTarget>; legalTarget: boolean; onClickTarget: () => boolean }) {
   const unregister = useRef<(() => void) | null>(null);
   useEffect(() => () => {
@@ -391,6 +425,15 @@ function ReleaseZone({ dropRegistry, legalTarget, onClickTarget }: { dropRegistr
     <strong>放生</strong>
     <small>拖入或点选后点击</small>
   </button>;
+}
+
+function ItemPreviewPanel({ preview }: { preview: ItemTargetPreview }) {
+  const replacement = preview.ok && preview.replacesEquipment ? " · 将替换旧装备" : "";
+  return <div className={`detailPanel itemPreviewPanel ${preview.ok ? "previewOk" : "previewInvalid"}`}>
+    <strong>{preview.ok ? "道具预览" : "目标无效"}</strong>
+    <p>{preview.ok ? `影响 ${preview.targetUnitIds.length} 只${replacement}` : preview.messageZh}</p>
+    <p>{preview.summaryZh}</p>
+  </div>;
 }
 
 function SelectionDetails({ selected, member, animalOffer, itemOffer }: { selected: SelectedFocus | null; member?: TeamMember; animalOffer?: NonNullable<ExpeditionState["camp"]>["animalOffers"][number]; itemOffer?: NonNullable<ExpeditionState["camp"]>["itemOffers"][number] }) {

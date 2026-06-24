@@ -1,5 +1,7 @@
 import { applyCampCommand } from "../../domain/campEngine";
-import type { CampCommand, ExpeditionState, ItemSlotRef, SpeciesId, UnitSlotRef } from "../../domain/types";
+import { ITEM_BY_ID } from "../../content/items";
+import { resolveItemTargets } from "../../domain/itemTargeting";
+import type { CampCommand, ExpeditionState, ItemDef, ItemSlotRef, ItemTargetCandidate, ItemTargetPreview, SpeciesId, UnitSlotRef } from "../../domain/types";
 import type { CampDragPayload, CampDropTarget, PointerPreflightResult } from "./gestureTypes";
 
 export type CampDragCommandResult =
@@ -20,6 +22,38 @@ function animalOffer(state: ExpeditionState, offerId: string) {
 
 function itemOffer(state: ExpeditionState, offerId: string) {
   return state.camp?.itemOffers.find((slot) => slot.offer?.offerInstanceId === offerId)?.offer ?? null;
+}
+
+function itemDefForPayload(state: ExpeditionState, payload: CampDragPayload): ItemDef | null {
+  if (payload.kind === "itemOffer") {
+    const offer = itemOffer(state, payload.offerId);
+    return offer ? ITEM_BY_ID[offer.itemId] : null;
+  }
+  if (payload.kind === "inventoryItem") {
+    const item = state.itemsById[payload.itemInstanceId];
+    return item && state.inventory.includes(payload.itemInstanceId) ? ITEM_BY_ID[item.itemId] : null;
+  }
+  return null;
+}
+
+function itemTargetForDrop(state: ExpeditionState, target: CampDropTarget): ItemTargetCandidate | null {
+  if (target.kind === "itemTeamTarget") return { kind: "allOwned" };
+  if (target.kind !== "unitSlot") return null;
+  const unitId = unitIdAt(state, target.ref);
+  return unitId ? { kind: "unit", unitId } : null;
+}
+
+function commandForItemTarget(payload: Extract<CampDragPayload, { kind: "itemOffer" | "inventoryItem" }>, target: ItemTargetCandidate): CampCommand {
+  if (payload.kind === "itemOffer") return { type: "purchaseAndApplyItem", offerId: payload.offerId, target };
+  return { type: "applyInventoryItem", itemInstanceId: payload.itemInstanceId, target };
+}
+
+export function resolveCampItemPreview(state: ExpeditionState, payload: CampDragPayload | null, target?: CampDropTarget | null): ItemTargetPreview | null {
+  if (!payload || (payload.kind !== "itemOffer" && payload.kind !== "inventoryItem")) return null;
+  const item = itemDefForPayload(state, payload);
+  if (!item) return null;
+  const candidate = target ? itemTargetForDrop(state, target) : item.targetSpec.kind === "allOwned" ? { kind: "allOwned" as const } : null;
+  return resolveItemTargets(state, item, candidate);
 }
 
 export function buildCampDragCommand(state: ExpeditionState, payload: CampDragPayload, target: CampDropTarget | null): CampDragCommandResult {
@@ -72,17 +106,33 @@ export function buildCampDragCommand(state: ExpeditionState, payload: CampDragPa
 
   if (payload.kind === "itemOffer") {
     if (target.kind === "releaseZone") return { ok: false, messageZh: "道具不能放生。" };
-    if (target.kind !== "inventorySlot") return { ok: false, messageZh: "P3B 暂不支持拖拽道具直接使用。" };
-    if (!itemOffer(state, payload.offerId)) return { ok: false, messageZh: "这个道具位是空的。" };
-    return { ok: true, command: { type: "purchaseItemToInventory", offerId: payload.offerId, to: target.ref } };
+    if (target.kind === "inventorySlot") {
+      if (!itemOffer(state, payload.offerId)) return { ok: false, messageZh: "这个道具位是空的。" };
+      return { ok: true, command: { type: "purchaseItemToInventory", offerId: payload.offerId, to: target.ref } };
+    }
+    const preview = resolveCampItemPreview(state, payload, target);
+    if (!preview) return { ok: false, messageZh: "这个道具位是空的。" };
+    if (target.kind === "itemTeamTarget" && preview.targetSpec.kind !== "allOwned") return { ok: false, messageZh: "请投放到合法动物目标。" };
+    if (!preview.ok) return { ok: false, messageZh: preview.messageZh };
+    const candidate = itemTargetForDrop(state, target);
+    if (!candidate) return { ok: false, messageZh: preview.messageZh };
+    return { ok: true, command: commandForItemTarget(payload, candidate) };
   }
 
   if (payload.kind === "inventoryItem") {
     if (target.kind === "releaseZone") return { ok: false, messageZh: "仓库道具不能放生。" };
-    if (target.kind !== "inventorySlot") return { ok: false, messageZh: "P3B 暂不支持仓库道具拖拽使用。" };
-    if (!state.itemsById[payload.itemInstanceId] || !state.inventory.includes(payload.itemInstanceId)) return { ok: false, messageZh: "没有找到仓库道具。" };
-    if (itemIdAt(state, target.ref) === payload.itemInstanceId) return { ok: true, command: { type: "moveItem", itemInstanceId: payload.itemInstanceId, to: target.ref } };
-    return { ok: true, command: { type: "moveItem", itemInstanceId: payload.itemInstanceId, to: target.ref } };
+    if (target.kind === "inventorySlot") {
+      if (!state.itemsById[payload.itemInstanceId] || !state.inventory.includes(payload.itemInstanceId)) return { ok: false, messageZh: "没有找到仓库道具。" };
+      if (itemIdAt(state, target.ref) === payload.itemInstanceId) return { ok: true, command: { type: "moveItem", itemInstanceId: payload.itemInstanceId, to: target.ref } };
+      return { ok: true, command: { type: "moveItem", itemInstanceId: payload.itemInstanceId, to: target.ref } };
+    }
+    const preview = resolveCampItemPreview(state, payload, target);
+    if (!preview) return { ok: false, messageZh: "没有找到仓库道具。" };
+    if (target.kind === "itemTeamTarget" && preview.targetSpec.kind !== "allOwned") return { ok: false, messageZh: "请投放到合法动物目标。" };
+    if (!preview.ok) return { ok: false, messageZh: preview.messageZh };
+    const candidate = itemTargetForDrop(state, target);
+    if (!candidate) return { ok: false, messageZh: preview.messageZh };
+    return { ok: true, command: commandForItemTarget(payload, candidate) };
   }
 
   return { ok: false, messageZh: "未知拖拽来源。" };

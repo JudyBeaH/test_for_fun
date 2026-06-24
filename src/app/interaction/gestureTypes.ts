@@ -51,6 +51,7 @@ export type CampDragPayload =
 export type CampDropTarget =
   | { kind: "unitSlot"; ref: UnitSlotRef }
   | { kind: "inventorySlot"; ref: ItemSlotRef }
+  | { kind: "itemTeamTarget" }
   | { kind: "releaseZone" };
 
 export type PointerPreflightResult = {

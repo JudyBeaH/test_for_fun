@@ -82,6 +82,16 @@ export function createMember(speciesId: SpeciesId, seed: number, round: number, 
   };
 }
 
+function createUniqueMember(state: ExpeditionState, speciesId: SpeciesId, seed: number): TeamMember {
+  let index = Object.keys(state.unitsById).length + 1;
+  let member = createMember(speciesId, seed, state.round, index);
+  while (state.unitsById[member.instanceId] || state.pendingRecruit?.instanceId === member.instanceId) {
+    index += 1;
+    member = createMember(speciesId, seed, state.round, index);
+  }
+  return member;
+}
+
 export function formationMembers(state: ExpeditionState): Array<TeamMember | null> {
   return state.formation.map((unitId) => unitId ? state.unitsById[unitId] ?? null : null);
 }
@@ -487,7 +497,7 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
     if (camp.supply < rules.recruitCost) throw new Error("补给不足，无法招募。");
     const slot = findAnimalOfferSlot(next, command.offerId);
     if (!slot?.offer || !slot.unlocked) throw new Error("这个动物位没有可招募动物。");
-    const member = createMember(slot.offer.speciesId, next.expeditionSeed, next.round, Object.keys(next.unitsById).length + 1);
+    const member = createUniqueMember(next, slot.offer.speciesId, next.expeditionSeed);
     if (command.type === "recruitAnimal") {
       const invalid = validateUnitSlot(command.to, rules);
       if (invalid) throw new Error(invalid);
@@ -574,7 +584,7 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
 
   if (command.type === "chooseDiscovery") {
     const discovery = takeDiscovery(next, command.discoveryId, command.speciesId);
-    next.pendingRecruit = createMember(command.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, Object.keys(next.unitsById).length + 1);
+    next.pendingRecruit = createUniqueMember(next, command.speciesId, next.expeditionSeed + discovery.discoveryId.length);
     next.phase = "upgradeDiscovery";
     return "请选择把新伙伴放入战斗队或替补。";
   }
@@ -584,7 +594,7 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
     if (invalid) throw new Error(invalid);
     if (unitAt(next, command.to)) throw new Error(command.to.zone === "formation" ? "目标战斗位已有动物。" : "目标替补位已有动物。");
     const discovery = takeDiscovery(next, command.discoveryId, command.speciesId);
-    const member = createMember(command.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, Object.keys(next.unitsById).length + 1);
+    const member = createUniqueMember(next, command.speciesId, next.expeditionSeed + discovery.discoveryId.length);
     insertUnit(next, member, command.to);
     next.phase = phaseAfterDiscoveryChoice(next);
     return "高级发现伙伴已加入。";
@@ -595,7 +605,7 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
     if (!target) throw new Error("没有找到合成目标。");
     if (target.speciesId !== command.speciesId) throw new Error("只能拖到同物种单位上合成。");
     const discovery = takeDiscovery(next, command.discoveryId, command.speciesId);
-    const member = createMember(command.speciesId, next.expeditionSeed + discovery.discoveryId.length, next.round, Object.keys(next.unitsById).length + 1);
+    const member = createUniqueMember(next, command.speciesId, next.expeditionSeed + discovery.discoveryId.length);
     const merge = mergeMembers(next, member, target);
     if (!merge.ok) throw new Error(merge.messageZh);
     next.stats.merges += 1;

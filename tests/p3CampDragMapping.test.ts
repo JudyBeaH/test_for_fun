@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyCampCommand, assertCampInvariants, formationMembers, reserveMembers, inventoryItems } from "../src/domain/campEngine";
 import { createExpedition } from "../src/domain/expeditionEngine";
-import { buildCampClickCommand, buildCampDragCommand, campClickSourceAfterKey, preflightCampDragCommand } from "../src/app/interaction/campDragMapping";
+import { buildCampClickCommand, buildCampDragCommand, campClickSourceAfterKey, preflightCampDragCommand, resolveCampItemPreview } from "../src/app/interaction/campDragMapping";
 import { createPointerDragController } from "../src/app/interaction/usePointerDragController";
 import type { CampDragPayload, CampDropTarget, PointerDragWindowTarget } from "../src/app/interaction/gestureTypes";
 import type { CampCommand, ExpeditionState, SpeciesId, TeamMember, UnitSlotRef } from "../src/domain/types";
@@ -133,6 +133,48 @@ describe("P3B camp drag mapping", () => {
     expect(reorder.state.inventory).toEqual(["item_b", "item_a", null]);
   });
 
+  it("maps item offers and inventory items to valid item targets", () => {
+    const marketSingle = runGesture(baseState(), { kind: "itemOffer", offerId: "offer_sling" }, { kind: "unitSlot", ref: { zone: "formation", slot: 1 } });
+    expect(marketSingle.dispatched).toEqual([{ type: "purchaseAndApplyItem", offerId: "offer_sling", target: { kind: "unit", unitId: "hare" } }]);
+    expect(marketSingle.state.unitsById.hare.equipment?.itemId).toBe("pinecone_sling");
+
+    const inventorySingle = runGesture(baseState(), { kind: "inventoryItem", itemInstanceId: "item_a" }, { kind: "unitSlot", ref: { zone: "formation", slot: 0 } });
+    expect(inventorySingle.dispatched).toEqual([{ type: "applyInventoryItem", itemInstanceId: "item_a", target: { kind: "unit", unitId: "frog_a" } }]);
+    expect(inventorySingle.state.unitsById.frog_a.permanentAttackBonus).toBe(1);
+    expect(inventorySingle.state.itemsById.item_a).toBeUndefined();
+
+    const allState = baseState();
+    allState.camp!.itemOffers[0].offer = { offerInstanceId: "offer_lotus", itemId: "team_lotus_seed" };
+    const allFormation = runGesture(allState, { kind: "itemOffer", offerId: "offer_lotus" }, { kind: "itemTeamTarget" });
+    expect(allFormation.dispatched).toEqual([{ type: "purchaseAndApplyItem", offerId: "offer_lotus", target: { kind: "allOwned" } }]);
+    expect(allFormation.state.unitsById.frog_a.permanentHealthBonus).toBe(1);
+    expect(allFormation.state.unitsById.hare.permanentHealthBonus).toBe(1);
+    expect(allFormation.state.unitsById.mussel.permanentHealthBonus).toBe(0);
+  });
+
+  it("previews item target highlights, affected counts, and equipment replacement without mutating state", () => {
+    const state = baseState();
+    state.unitsById.hare.equipment = { instanceId: "old_sling", itemId: "pinecone_sling" };
+    const before = JSON.stringify(state);
+
+    const group = resolveCampItemPreview(state, { kind: "inventoryItem", itemInstanceId: "item_b" });
+    expect(group?.ok).toBe(true);
+    expect(group?.targetUnitIds).toEqual(["frog_a", "frog_b", "mussel"]);
+    expect(group?.summaryZh).toContain("影响 3 个目标");
+
+    const equipment = resolveCampItemPreview(state, { kind: "itemOffer", offerId: "offer_sling" }, { kind: "unitSlot", ref: { zone: "formation", slot: 1 } });
+    expect(equipment?.ok).toBe(true);
+    expect(equipment?.replacesEquipment).toBe(true);
+    expect(equipment?.replacedEquipmentUnitIds).toEqual(["hare"]);
+
+    const allState = baseState();
+    allState.camp!.itemOffers[0].offer = { offerInstanceId: "offer_lotus", itemId: "team_lotus_seed" };
+    const all = resolveCampItemPreview(allState, { kind: "itemOffer", offerId: "offer_lotus" });
+    expect(all?.ok).toBe(true);
+    expect(all?.targetUnitIds).toEqual(["frog_a", "hare", "frog_b"]);
+    expect(JSON.stringify(state)).toBe(before);
+  });
+
   it("maps upgrade discovery cards to exact slots, same-species merge, or no-op reasons", () => {
     const exact = buildCampDragCommand(baseState(), { kind: "upgradeDiscovery", discoveryId: "discovery_1", speciesId: "hare" }, { kind: "unitSlot", ref: { zone: "formation", slot: 2 } });
     expect(exact).toEqual({ ok: true, command: { type: "chooseDiscoveryToSlot", discoveryId: "discovery_1", speciesId: "hare", to: { zone: "formation", slot: 2 } } });
@@ -169,9 +211,9 @@ describe("P3B camp drag mapping", () => {
     expect(invalidSpecies.dispatched).toEqual([]);
     expect(invalidSpecies.rejected).toEqual(["目标位置已有不同物种动物。"]);
 
-    const itemToUnit = runGesture(baseState(), { kind: "itemOffer", offerId: "offer_sling" }, { kind: "unitSlot", ref: { zone: "formation", slot: 0 } });
+    const itemToUnit = runGesture(baseState(), { kind: "inventoryItem", itemInstanceId: "item_b" }, { kind: "unitSlot", ref: { zone: "formation", slot: 1 } });
     expect(itemToUnit.dispatched).toEqual([]);
-    expect(itemToUnit.rejected).toEqual(["P3B 暂不支持拖拽道具直接使用。"]);
+    expect(itemToUnit.rejected).toEqual(["目标动物不属于水域族群。"]);
 
     const noTarget = runGesture(baseState(), { kind: "ownedUnit", unitId: "hare" }, null);
     expect(noTarget.dispatched).toEqual([]);
@@ -191,7 +233,9 @@ describe("P3C camp click parity", () => {
     { name: "upgrade discovery to exact slot", payload: { kind: "upgradeDiscovery", discoveryId: "discovery_1", speciesId: "hare" }, target: { kind: "unitSlot", ref: { zone: "formation", slot: 2 } } },
     { name: "upgrade discovery same species merge", payload: { kind: "upgradeDiscovery", discoveryId: "discovery_1", speciesId: "frog" }, target: { kind: "unitSlot", ref: { zone: "formation", slot: 0 } } },
     { name: "owned release", payload: { kind: "ownedUnit", unitId: "hare" }, target: { kind: "releaseZone" } },
-    { name: "invalid item target", payload: { kind: "itemOffer", offerId: "offer_sling" }, target: { kind: "unitSlot", ref: { zone: "formation", slot: 0 } } },
+    { name: "market equipment to unit", payload: { kind: "itemOffer", offerId: "offer_sling" }, target: { kind: "unitSlot", ref: { zone: "formation", slot: 0 } } },
+    { name: "inventory food to unit", payload: { kind: "inventoryItem", itemInstanceId: "item_a" }, target: { kind: "unitSlot", ref: { zone: "formation", slot: 0 } } },
+    { name: "invalid item target", payload: { kind: "inventoryItem", itemInstanceId: "item_b" }, target: { kind: "unitSlot", ref: { zone: "formation", slot: 1 } } },
     { name: "invalid missing target", payload: { kind: "ownedUnit", unitId: "hare" }, target: null },
   ];
 
