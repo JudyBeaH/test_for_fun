@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CONTENT_VERSION, ENGINE_VERSION } from "../src/content/constants";
 import { resolveBattle } from "../src/domain/battleEngine";
-import type { BattleInput, SpeciesId, TeamSnapshot } from "../src/domain/types";
+import type { BattleInput, EnvironmentId, SpeciesId, TeamSnapshot } from "../src/domain/types";
 
 function snap(ids: SpeciesId[], opts: Partial<{ sleepFirst: boolean; slingFirst: boolean }> = {}): TeamSnapshot {
   return {
@@ -19,8 +19,8 @@ function snap(ids: SpeciesId[], opts: Partial<{ sleepFirst: boolean; slingFirst:
   };
 }
 
-function input(player: TeamSnapshot, opponent: TeamSnapshot, seed = 1): BattleInput {
-  return { battleId: `b_${seed}`, playerTeam: player, opponentTeam: opponent, environmentId: "wetland_channel", seed, engineVersion: ENGINE_VERSION, contentVersion: CONTENT_VERSION };
+function input(player: TeamSnapshot, opponent: TeamSnapshot, seed = 1, environmentId: EnvironmentId = "wetland_channel"): BattleInput {
+  return { battleId: `b_${seed}`, playerTeam: player, opponentTeam: opponent, environmentId, seed, engineVersion: ENGINE_VERSION, contentVersion: CONTENT_VERSION };
 }
 
 describe("v0.2 battle engine", () => {
@@ -82,5 +82,46 @@ describe("v0.2 battle engine", () => {
     expect(moved.map((event) => event.sourceUnitId)).toEqual(["player_frog_0", "player_weasel_1"]);
     expect(moved.find((event) => event.sourceUnitId === "player_frog_0")?.after).toBe(1);
     expect(moved.find((event) => event.sourceUnitId === "player_weasel_1")?.after).toBe(0);
+  });
+
+  it("P5B: 双方 battleStart 从同一快照收集，已提交触发不会被同批伤害取消", () => {
+    const player = { units: snap(["kingfisher"]).units.map((unit) => ({ ...unit, level: 3 as const, initialMaxHealth: 3 })) };
+    const opponent = { units: snap(["kingfisher"]).units.map((unit) => ({ ...unit, level: 3 as const, initialMaxHealth: 3 })) };
+
+    const result = resolveBattle(input(player, opponent, 15, "canopy"));
+    const startAbilities = result.events.filter((event) => event.type === "abilityTriggered" && event.metadata.trigger === "battleStart");
+
+    expect(startAbilities.map((event) => event.sourceUnitId)).toEqual(["player_kingfisher_0", "opponent_kingfisher_0"]);
+    expect(result.result).toBe("draw");
+  });
+
+  it("P5B: 双方 preAttack 从同一 exchange 快照收集，互相击退也都会结算", () => {
+    const player = { units: snap(["egret"]).units.map((unit) => ({ ...unit, initialMaxHealth: 2 })) };
+    const opponent = { units: snap(["egret"]).units.map((unit) => ({ ...unit, initialMaxHealth: 2 })) };
+
+    const result = resolveBattle(input(player, opponent, 16, "canopy"));
+    const preAttackAbilities = result.events.filter((event) => event.type === "abilityTriggered" && event.metadata.trigger === "beforeAttack");
+
+    expect(preAttackAbilities.map((event) => event.sourceUnitId)).toEqual(["player_egret_0", "opponent_egret_0"]);
+    expect(result.result).toBe("draw");
+  });
+
+  it("P5B: exchange start 锁定攻击者，preAttack 中退场的前排不会被后排替补进本次攻击", () => {
+    const player = { units: snap(["weasel", "weasel"]).units.map((unit, index) => index === 0 ? { ...unit, initialMaxHealth: 2 } : unit) };
+    const opponent = snap(["egret"]);
+
+    const result = resolveBattle(input(player, opponent, 17, "canopy"));
+    const firstExchangeDamage = result.events.filter((event) => event.exchangeId === "x1" && event.type === "damageApplied" && event.metadata.damageKind === "normalAttack");
+
+    expect(firstExchangeDamage.map((event) => event.sourceUnitId)).toEqual(["opponent_egret_0"]);
+    expect(firstExchangeDamage.some((event) => event.sourceUnitId === "player_weasel_1")).toBe(false);
+  });
+
+  it("P5B: 普攻数值在双方 preAttack 完成后再快照", () => {
+    const result = resolveBattle(input(snap(["hare"]), snap(["hare"]), 18));
+    const firstExchangeDamage = result.events.filter((event) => event.exchangeId === "x1" && event.type === "damageApplied" && event.metadata.damageKind === "normalAttack");
+
+    expect(firstExchangeDamage.map((event) => event.amount)).toEqual([4, 4]);
+    expect(firstExchangeDamage.map((event) => event.simultaneousGroupId)).toEqual(["x1", "x1"]);
   });
 });

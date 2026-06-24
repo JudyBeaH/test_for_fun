@@ -390,9 +390,13 @@ export interface CampTransition {
   command: CampCommand;
 }
 
+export type BattleSlot = "L4" | "L3" | "L2" | "L1" | "L0" | "R0" | "R1" | "R2" | "R3" | "R4";
+
 export interface BattleUnit {
   unitId: string;
   side: Side;
+  originOwner: Side;
+  slot: BattleSlot;
   speciesId: SpeciesId;
   level: 1 | 2 | 3;
   attack: number;
@@ -437,10 +441,27 @@ export type BattleEventType =
   | "battleEnded"
   | "safetyCapReached";
 
+export type BattlePhaseId =
+  | "setup"
+  | "environment"
+  | "battleStart"
+  | "exchangeStart"
+  | "preAttack"
+  | "windup"
+  | "impact"
+  | "hurt"
+  | "retreat"
+  | "afterAttack"
+  | "battleEnd";
+
 export interface BattleEvent {
   eventId: string;
   sequence: number;
   type: BattleEventType;
+  phaseId?: BattlePhaseId;
+  batchId?: string;
+  exchangeId?: string;
+  simultaneousGroupId?: string;
   sourceUnitId?: string;
   targetUnitId?: string;
   side?: Side;

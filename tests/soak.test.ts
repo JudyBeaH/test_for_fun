@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveBattle } from "../src/domain/battleEngine";
+import { combatSideForSlot } from "../src/domain/battleBoard";
 import { createExpedition } from "../src/domain/expeditionEngine";
 import { battleInputForState } from "../src/sim/opponentGenerator";
 import { runAutoCamp } from "../src/sim/autoPlayer";
@@ -14,9 +15,19 @@ describe("soak and boundaries", () => {
       if (!state.formation.some(Boolean)) continue;
       const output = resolveBattle(battleInputForState(state));
       expect(new Set(output.events.map((event) => event.sequence)).size).toBe(output.events.length);
+      const activeSlots = [...output.finalPlayerUnits, ...output.finalOpponentUnits].filter((unit) => !unit.retreated).map((unit) => unit.slot);
+      expect(new Set(activeSlots).size).toBe(activeSlots.length);
+      for (const event of output.events) expect(event.phaseId).toBeTruthy();
+      for (const event of output.events.filter((item) => item.type === "damageApplied" && item.metadata.damageKind === "normalAttack")) {
+        expect(event.exchangeId).toBeTruthy();
+        expect(event.simultaneousGroupId).toBe(event.exchangeId);
+      }
       for (const unit of [...output.finalPlayerUnits, ...output.finalOpponentUnits]) {
         expect(Number.isNaN(unit.health)).toBe(false);
         expect(unit.shield).toBeGreaterThanOrEqual(0);
+        expect(unit.side).toBe(combatSideForSlot(unit.slot));
+        expect(unit.originOwner).toMatch(/player|opponent/);
+        expect(unit.unitId.startsWith(`${unit.originOwner}_`)).toBe(true);
       }
     }
   });
