@@ -288,7 +288,7 @@ describe("P2 fixed camp slots and atomic commands", () => {
     expect(inventoryItems(state).map((item) => item?.instanceId ?? "empty")).toEqual(["empty", "empty", "stored"]);
   });
 
-  it("preserves held offers by fixed slot across camp enter after refresh", () => {
+  it("preserves held offers once and clears held state across camp enter", () => {
     let state = createExpedition(8);
     state = ok(state, { type: "refresh" });
     state = ok(state, { type: "toggleHold", slotKind: "animal", offerId: state.camp!.animalOffers[0].offer!.offerInstanceId });
@@ -296,9 +296,9 @@ describe("P2 fixed camp slots and atomic commands", () => {
     const animalOffer = state.camp!.animalOffers[0].offer;
     const itemOffer = state.camp!.itemOffers[0].offer;
     const nextCamp = enterCamp({ ...state, round: state.round + 1 }, state.camp!.supply);
-    expect(nextCamp.camp!.animalOffers[0].held).toBe(true);
+    expect(nextCamp.camp!.animalOffers[0].held).toBe(false);
     expect(nextCamp.camp!.animalOffers[0].offer).toEqual(animalOffer);
-    expect(nextCamp.camp!.itemOffers[0].held).toBe(true);
+    expect(nextCamp.camp!.itemOffers[0].held).toBe(false);
     expect(nextCamp.camp!.itemOffers[0].offer).toEqual(itemOffer);
   });
 

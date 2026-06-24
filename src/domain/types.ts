@@ -30,7 +30,7 @@ export type SpeciesId =
   | "pangolin"
   | "egret"
   | "weasel";
-export type ItemId = "red_berry" | "river_moss" | "bond_nut" | "pinecone_sling" | "bitter_root" | "melatonin";
+export type ItemId = "red_berry" | "river_moss" | "bond_nut" | "pinecone_sling" | "bitter_root" | "melatonin" | "team_lotus_seed";
 
 export type TargetSelector =
   | "self"
@@ -108,6 +108,40 @@ export interface AnimalDef {
 }
 
 export type ItemKind = "equipment" | "food";
+export type ItemUsage = "equipment" | "food";
+export type ItemAllowedZone = UnitSlotRef["zone"];
+export type ItemTargetSpec =
+  | { kind: "singleUnit"; allowedZones: readonly ItemAllowedZone[] }
+  | { kind: "group"; allowedZones: readonly ItemAllowedZone[]; selector: { kind: "habitat"; habitat: Habitat } }
+  | { kind: "allOwned"; allowedZones: readonly ItemAllowedZone[] }
+  | { kind: "none"; allowedZones: readonly ItemAllowedZone[] };
+export type ItemTargetCandidate =
+  | { kind: "unit"; unitId: UnitId }
+  | { kind: "allOwned" }
+  | { kind: "none" };
+export type ItemTargetPreview =
+  | {
+      ok: true;
+      itemId: ItemId;
+      usage: ItemUsage;
+      targetSpec: ItemTargetSpec;
+      targetUnitIds: UnitId[];
+      messageZh: string;
+      summaryZh: string;
+      replacesEquipment: boolean;
+      replacedEquipmentUnitIds: UnitId[];
+    }
+  | {
+      ok: false;
+      itemId: ItemId;
+      usage: ItemUsage;
+      targetSpec: ItemTargetSpec;
+      targetUnitIds: UnitId[];
+      messageZh: string;
+      summaryZh: string;
+      replacesEquipment: false;
+      replacedEquipmentUnitIds: [];
+    };
 export type ItemTargetScope = { kind: "singleUnit" } | { kind: "habitat"; habitat: Habitat } | { kind: "allOwned" };
 export type EffectDuration =
   | { kind: "permanent" }
@@ -144,7 +178,10 @@ export interface ItemDef {
   id: ItemId;
   nameZh: string;
   kind: ItemKind;
+  usage: ItemUsage;
   price: number;
+  visual: { emoji: string; fallbackGlyph: string };
+  targetSpec: ItemTargetSpec;
   targetScope: ItemTargetScope;
   descriptionZh: string;
   effects: readonly ItemEffectDef[];
@@ -327,7 +364,7 @@ export type UnitSlotRef =
 
 export type ItemSlotRef = { zone: "inventory"; slot: 0 | 1 | 2 };
 
-export type ItemTarget = { kind: "units"; unitIds: UnitId[] };
+export type ItemTarget = ItemTargetCandidate | { kind: "units"; unitIds: UnitId[] };
 
 export type CampCommand =
   | { type: "toggleHold"; slotKind: "animal" | "item"; offerId: OfferId; expectedRevision?: number }

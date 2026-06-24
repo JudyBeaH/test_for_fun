@@ -2,6 +2,7 @@ import { ANIMALS, ANIMAL_BY_ID } from "../content/animals";
 import { CAMP_LEVELS } from "../content/campLevels";
 import { DEFAULT_CAMP_ECONOMY } from "../content/constants";
 import { ITEMS, ITEM_BY_ID } from "../content/items";
+import { resolveItemTargets } from "./itemTargeting";
 import type {
   AnimalOffer,
   CampCommand,
@@ -13,11 +14,13 @@ import type {
   Fixed2,
   Fixed3,
   Fixed5,
-  Habitat,
   ItemInstance,
   ItemInstanceId,
   ItemOffer,
   ItemSlotRef,
+  ItemTarget,
+  ItemTargetCandidate,
+  ItemTargetPreview,
   OfferId,
   OfferSlot,
   SpeciesId,
@@ -200,11 +203,11 @@ export function enterCamp(state: ExpeditionState, previousLeftover = 0): Expedit
     animalOffers: fixed5(Array.from({ length: 5 }, (_, index) => {
       const unlocked = index < rules.animalOfferSlots;
       const old = heldAnimal.get(index);
-      return old && unlocked ? { ...old, slotId: makeId("animal_slot", next.expeditionSeed + next.round, index) } : rollAnimalSlot(next.expeditionSeed, next.round, index, unlocked, rules);
+      return old && unlocked ? { ...old, slotId: makeId("animal_slot", next.expeditionSeed + next.round, index), held: false } : rollAnimalSlot(next.expeditionSeed, next.round, index, unlocked, rules);
     }), rollAnimalSlot(next.expeditionSeed, next.round, 0, false, rules)),
     itemOffers: fixed2(Array.from({ length: 2 }, (_, index) => {
       const old = heldItems.get(index);
-      return index < rules.itemOfferSlots ? old ? { ...old, slotId: makeId("item_slot", next.expeditionSeed + next.round, index) } : rollItemSlot(next.expeditionSeed, next.round, index) : { ...rollItemSlot(next.expeditionSeed, next.round, index), unlocked: false, offer: null };
+      return index < rules.itemOfferSlots ? old ? { ...old, slotId: makeId("item_slot", next.expeditionSeed + next.round, index), held: false } : rollItemSlot(next.expeditionSeed, next.round, index) : { ...rollItemSlot(next.expeditionSeed, next.round, index), unlocked: false, offer: null };
     }), { ...rollItemSlot(next.expeditionSeed, next.round, 0), unlocked: false, offer: null }),
   };
   return next;
@@ -275,6 +278,15 @@ function nextItemInstanceId(state: ExpeditionState): ItemInstanceId {
 
 function getOwnedUnit(state: ExpeditionState, unitId: UnitId): TeamMember | undefined {
   return findUnitSlot(state, unitId) ? state.unitsById[unitId] : undefined;
+}
+
+function itemTargetCandidate(item: keyof typeof ITEM_BY_ID, target: ItemTarget): ItemTargetCandidate | null {
+  if (target.kind === "unit" || target.kind === "allOwned" || target.kind === "none") return target;
+  const spec = ITEM_BY_ID[item].targetSpec;
+  if (spec.kind === "singleUnit") return target.unitIds[0] ? { kind: "unit", unitId: target.unitIds[0] } : null;
+  if (spec.kind === "group") return target.unitIds[0] ? { kind: "unit", unitId: target.unitIds[0] } : null;
+  if (spec.kind === "allOwned") return { kind: "allOwned" };
+  return { kind: "none" };
 }
 
 function removeUnitFromSlot(state: ExpeditionState, unitId: UnitId): UnitSlotRef {
@@ -525,12 +537,16 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
       const instance: ItemInstance = { instanceId: nextItemInstanceId(next), itemId: item.id };
       next.itemsById[instance.instanceId] = instance;
       setItemAt(next, command.to, instance.instanceId);
-    } else if (item.kind === "equipment") {
-      const equip = equipPurchasedItem(next, item.id, command.target.unitIds);
-      if (!equip.ok) throw new Error(equip.messageZh);
     } else {
-      const use = applyItemEffects(next, item.id, command.target.unitIds);
-      if (!use.ok) throw new Error(use.messageZh);
+      const preview = resolveItemTargets(next, item, itemTargetCandidate(item.id, command.target));
+      if (!preview.ok) throw new Error(preview.messageZh);
+      if (item.usage === "equipment") {
+        const equip = equipPurchasedItem(next, item.id, preview);
+        if (!equip.ok) throw new Error(equip.messageZh);
+      } else {
+        const use = applyResolvedItemEffects(next, item.id, preview.targetUnitIds);
+        if (!use.ok) throw new Error(use.messageZh);
+      }
     }
     camp.supply -= item.price;
     clearOffer(slot);
@@ -542,15 +558,17 @@ function applyCampCommandUnchecked(next: ExpeditionState, command: CampCommand):
     const item = next.itemsById[command.itemInstanceId];
     if (!sourceSlot || !item) throw new Error("没有找到仓库道具。");
     const def = ITEM_BY_ID[item.itemId];
-    if (def.kind === "equipment") {
-      const equip = equipInventoryItem(next, item, command.target.unitIds[0], command.discardOld);
+    const preview = resolveItemTargets(next, def, itemTargetCandidate(item.itemId, command.target));
+    if (!preview.ok) throw new Error(preview.messageZh);
+    if (def.usage === "equipment") {
+      const equip = equipInventoryItem(next, sourceSlot, item, preview, command.discardOld);
       if (!equip.ok) throw new Error(equip.messageZh);
     } else {
-      const use = applyItemEffects(next, item.itemId, command.target.unitIds);
+      const use = applyResolvedItemEffects(next, item.itemId, preview.targetUnitIds);
       if (!use.ok) throw new Error(use.messageZh);
+      setItemAt(next, sourceSlot, null);
+      delete next.itemsById[item.instanceId];
     }
-    setItemAt(next, sourceSlot, null);
-    delete next.itemsById[item.instanceId];
     return def.kind === "equipment" ? "装备已更新。" : `${def.nameZh}已使用。`;
   }
 
@@ -712,9 +730,9 @@ function normalizeEquipment(itemId: string) {
   return { itemId: item.id, initialAttackBonus, initialHealthBonus, battleStartDamage };
 }
 
-function applyItemEffects(state: ExpeditionState, itemId: keyof typeof ITEM_BY_ID, targetInstanceIds: string[]): { ok: boolean; messageZh: string } {
+function applyResolvedItemEffects(state: ExpeditionState, itemId: keyof typeof ITEM_BY_ID, targetInstanceIds: string[]): { ok: boolean; messageZh: string } {
   const item = ITEM_BY_ID[itemId];
-  const targets = selectItemTargets(state, item.targetScope, targetInstanceIds);
+  const targets = targetInstanceIds.flatMap((unitId) => getOwnedUnit(state, unitId) ?? []);
   if (targets.length === 0) return { ok: false, messageZh: "没有合法目标，道具未消耗。" };
   for (const target of targets) {
     const before = memberLevel(target);
@@ -741,10 +759,9 @@ function applyItemEffects(state: ExpeditionState, itemId: keyof typeof ITEM_BY_I
   return { ok: true, messageZh: `${item.nameZh}已生效。` };
 }
 
-function equipPurchasedItem(state: ExpeditionState, itemId: keyof typeof ITEM_BY_ID, targetInstanceIds: string[]): { ok: boolean; messageZh: string } {
-  const targetId = targetInstanceIds[0];
-  if (!targetId) return { ok: false, messageZh: "请选择要装备的动物。" };
-  const target = getOwnedUnit(state, targetId);
+function equipPurchasedItem(state: ExpeditionState, itemId: keyof typeof ITEM_BY_ID, preview: ItemTargetPreview): { ok: boolean; messageZh: string } {
+  if (!preview.ok) return { ok: false, messageZh: preview.messageZh };
+  const target = preview.targetUnitIds[0] ? getOwnedUnit(state, preview.targetUnitIds[0]) : undefined;
   if (!target) return { ok: false, messageZh: "装备目标不存在。" };
   const old = target.equipment;
   if (old && firstEmptyInventorySlot(state) < 0) return { ok: false, messageZh: "仓库已满，请先处理旧装备。" };
@@ -753,25 +770,21 @@ function equipPurchasedItem(state: ExpeditionState, itemId: keyof typeof ITEM_BY
   return { ok: true, messageZh: "装备已更新。" };
 }
 
-function equipInventoryItem(state: ExpeditionState, item: ItemInstance, targetId: string | undefined, discardOld?: boolean): { ok: boolean; messageZh: string } {
-  if (!targetId) return { ok: false, messageZh: "请选择要装备的动物。" };
-  const target = getOwnedUnit(state, targetId);
+function equipInventoryItem(state: ExpeditionState, sourceSlot: ItemSlotRef, item: ItemInstance, preview: ItemTargetPreview, discardOld?: boolean): { ok: boolean; messageZh: string } {
+  if (!preview.ok) return { ok: false, messageZh: preview.messageZh };
+  const target = preview.targetUnitIds[0] ? getOwnedUnit(state, preview.targetUnitIds[0]) : undefined;
   if (!target) return { ok: false, messageZh: "装备目标不存在。" };
   const def = ITEM_BY_ID[item.itemId];
   if (def.kind !== "equipment") return { ok: false, messageZh: "这个道具不是装备。" };
   const old = target.equipment;
-  if (old && firstEmptyInventorySlot(state) < 0 && !discardOld) return { ok: false, messageZh: "仓库已满，请确认丢弃旧装备。" };
+  setItemAt(state, sourceSlot, null);
+  delete state.itemsById[item.instanceId];
   target.equipment = { instanceId: item.instanceId, itemId: item.itemId };
-  if (old && !discardOld) addInventoryItemToFirstEmptySlot(state, { instanceId: old.instanceId, itemId: old.itemId });
+  if (old && !discardOld) {
+    state.itemsById[old.instanceId] = { instanceId: old.instanceId, itemId: old.itemId };
+    setItemAt(state, sourceSlot, old.instanceId);
+  }
   return { ok: true, messageZh: "装备已更新。" };
-}
-
-function selectItemTargets(state: ExpeditionState, scope: { kind: string; habitat?: Habitat }, ids: string[]): TeamMember[] {
-  const owned = allOwnedMembers(state);
-  if (scope.kind === "singleUnit") return owned.filter((member) => ids.includes(member.instanceId)).slice(0, 1);
-  if (scope.kind === "allOwned") return owned;
-  if (scope.kind === "habitat" && scope.habitat) return owned.filter((member) => ANIMAL_BY_ID[member.speciesId].habitats.includes(scope.habitat as Habitat));
-  return [];
 }
 
 export function sortTeamHeuristic(team: readonly TeamMember[]): TeamMember[] {

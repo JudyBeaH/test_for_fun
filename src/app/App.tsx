@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ANIMALS, ANIMAL_BY_ID } from "../content/animals";
 import { ENVIRONMENT_BY_ID } from "../content/environments";
 import { ITEM_BY_ID } from "../content/items";
-import { applyCampCommand, computeCampRules, firstEmptyFormationSlot, firstEmptyReserveSlot, formationMembers, inventoryItems, memberLevel, reserveMembers } from "../domain/campEngine";
+import { applyCampCommand, computeCampRules, formationMembers, inventoryItems, memberLevel, reserveMembers } from "../domain/campEngine";
 import { decodeChallengeCode, encodeChallengeCode } from "../domain/challengeCode";
 import { completeSuccessResolution, createExpedition, finishBattleReport, prepareBattle, resolvePreparedBattle } from "../domain/expeditionEngine";
 import { applyChallengeReward, applyRewardChoice, createRewardChoices } from "../domain/rewardEngine";
-import type { AppSave, BattleEvent, BattleOutput, CampCommand, ExpeditionState, RegisteredTeam, RewardChoice, Side, SpeciesId, TeamMember, TeamSnapshotUnit, UnitSlotRef } from "../domain/types";
+import type { AppSave, BattleEvent, BattleOutput, CampCommand, ExpeditionState, ItemId, RegisteredTeam, RewardChoice, Side, SpeciesId, TeamMember, TeamSnapshotUnit, UnitSlotRef } from "../domain/types";
 import { resolveBattle } from "../domain/battleEngine";
 import { exportSave, importSaveJson, loadSave, saveAppSave, resetSave, stagingInfo, clearStaging } from "../storage/localRepository";
 import { createDropRegistry } from "./interaction/dropRegistry";
@@ -207,6 +208,10 @@ function toUnitSlotRef(area: "team" | "reserve", index: number): UnitSlotRef {
   return area === "team" ? { zone: "formation", slot: index as 0 | 1 | 2 | 3 | 4 } : { zone: "reserve", slot: index as 0 | 1 | 2 };
 }
 
+function isActivationKey(event: ReactKeyboardEvent): boolean {
+  return event.key === "Enter" || event.key === " ";
+}
+
 function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: ExpeditionState; onAction: (command: CampCommand) => void; onDepart: () => void; onInvalidDrop: (messageZh: string) => void }) {
   const rules = computeCampRules(expedition);
   const camp = expedition.camp!;
@@ -232,10 +237,6 @@ function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: E
   const selectedMember = selected?.kind === "member" ? [...formation, ...reserve].find((member) => member?.instanceId === selected.instanceId) ?? undefined : undefined;
   const selectedAnimalOffer = selected?.kind === "animalOffer" ? camp.animalOffers.find((slot) => slot.offer?.offerInstanceId === selected.slotId) : undefined;
   const selectedItemOffer = selected?.kind === "itemOffer" ? camp.itemOffers.find((slot) => slot.offer?.offerInstanceId === selected.slotId) : undefined;
-  const firstOpenTeamIndex = firstEmptyFormationSlot(expedition);
-  const firstOpenReserveIndex = firstEmptyReserveSlot(expedition);
-  const openFormationSlot = firstOpenTeamIndex >= 0 ? firstOpenTeamIndex as 0 | 1 | 2 | 3 | 4 : null;
-  const openReserveSlot = firstOpenReserveIndex >= 0 ? firstOpenReserveIndex as 0 | 1 | 2 : null;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -279,41 +280,39 @@ function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: E
   return <section className={`screen campLayout ${dragging ? "draggingCamp" : ""}`} onContextMenu={(event) => event.preventDefault()}>
     <aside className="sideRail">
       <h2>替补 Zzz</h2>
-      <SlotList members={reserve} area="reserve" clickSource={clickSource} firstOpenTeamIndex={firstOpenTeamIndex} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} onAction={onAction} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
+      <SlotList members={reserve} area="reserve" clickSource={clickSource} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
       <h2>仓库</h2>
-      <InventoryList clickSource={clickSource} inventory={inventory} isLegalClickTarget={isLegalClickTarget} onAction={onAction} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selectedMember={selectedMember} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
+      <InventoryList clickSource={clickSource} inventory={inventory} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
     </aside>
     <main className="campMain">
       <div className="statline"><span>站点 {expedition.round}</span><span>营地 Lv{camp.campLevel}</span><span>章 {expedition.badges}/10</span><span>士气 {expedition.morale}</span><span>补给 {camp.supply}</span><span>入营基础/上限 {rules.baseSupply}/{rules.supplyCap}</span><span>结转 {rules.carrySupplyLimit}</span></div>
       {expedition.pendingDiscoveries[0] && <Discovery clickSource={clickSource} discovery={expedition.pendingDiscoveries[0]} onAction={onAction} onBeginClickSource={beginClickSource} sourceHandlers={dragController.sourceHandlers} />}
-      {expedition.pendingRecruit && <PendingRecruit clickSource={clickSource} expedition={expedition} member={expedition.pendingRecruit} onAction={onAction} onBeginClickSource={beginClickSource} sourceHandlers={dragController.sourceHandlers} />}
+      {expedition.pendingRecruit && <PendingRecruit clickSource={clickSource} member={expedition.pendingRecruit} onBeginClickSource={beginClickSource} sourceHandlers={dragController.sourceHandlers} />}
       <h2>战斗队：后排 → 前排（领域前排为索引 0）</h2>
-      <SlotList members={formation} area="team" clickSource={clickSource} firstOpenTeamIndex={firstOpenTeamIndex} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} onAction={onAction} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
+      <SlotList members={formation} area="team" clickSource={clickSource} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} selected={selected} onSelect={setSelected} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
       <h2>动物邂逅</h2>
       <div className="offerGrid">{camp.animalOffers.map((slot) => {
         const payload: CampDragPayload | null = slot.offer ? { kind: "animalOffer", offerId: slot.offer.offerInstanceId } : null;
         const clickSourceClass = payload && clickSource?.kind === "animalOffer" && clickSource.offerId === payload.offerId ? "clickSource" : "";
-        return <article key={slot.slotId} className={`offer ${slot.held ? "held" : ""} ${clickSourceClass} ${selected?.kind === "animalOffer" && selected.slotId === slot.offer?.offerInstanceId ? "selectedOffer" : ""} ${!slot.unlocked ? "locked" : ""}`} onClick={() => { if (!payload) return; beginClickSource(payload); setSelected({ kind: "animalOffer", slotId: payload.offerId }); }} {...(payload ? dragController.sourceHandlers(payload) : {})}>{slot.unlocked ? slot.offer ? <><AnimalAvatar speciesId={slot.offer.speciesId} /><span>价格 {rules.recruitCost}</span><button disabled={openFormationSlot === null} onClick={() => openFormationSlot !== null && onAction({ type: "recruitAnimal", offerId: slot.offer!.offerInstanceId, to: { zone: "formation", slot: openFormationSlot } })}>入队</button><button disabled={openReserveSlot === null} onClick={() => openReserveSlot !== null && onAction({ type: "recruitAnimal", offerId: slot.offer!.offerInstanceId, to: { zone: "reserve", slot: openReserveSlot } })}>替补</button>{selectedMember?.speciesId === slot.offer.speciesId && <button onClick={() => onAction({ type: "recruitAndMerge", offerId: slot.offer!.offerInstanceId, targetUnitId: selectedMember.instanceId })}>招募合成</button>}<button onClick={() => onAction({ type: "toggleHold", slotKind: "animal", offerId: slot.offer!.offerInstanceId })}>{slot.held ? "取消留意" : "留意"}</button></> : "空格，刷新补货" : "深入后开放"}</article>;
+        return <article key={slot.slotId} className={`offer ${slot.held ? "held" : ""} ${clickSourceClass} ${selected?.kind === "animalOffer" && selected.slotId === slot.offer?.offerInstanceId ? "selectedOffer" : ""} ${!slot.unlocked ? "locked" : ""}`} onClick={() => { if (!payload) return; beginClickSource(payload); setSelected({ kind: "animalOffer", slotId: payload.offerId }); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); if (slot.offer) onAction({ type: "toggleHold", slotKind: "animal", offerId: slot.offer.offerInstanceId }); }} {...(payload ? dragController.sourceHandlers(payload) : {})}>{slot.unlocked ? slot.offer ? <><AnimalAvatar speciesId={slot.offer.speciesId} /><span className="cardMeta">价格 {rules.recruitCost}</span></> : "空格，刷新补货" : "深入后开放"}</article>;
       })}</div>
       <h2>道具发现</h2>
       <div className="offerGrid items">{camp.itemOffers.map((slot) => {
         const payload: CampDragPayload | null = slot.offer ? { kind: "itemOffer", offerId: slot.offer.offerInstanceId } : null;
         const clickSourceClass = payload && clickSource?.kind === "itemOffer" && clickSource.offerId === payload.offerId ? "clickSource" : "";
-        return <article key={slot.slotId} className={`offer ${slot.held ? "held" : ""} ${clickSourceClass} ${selected?.kind === "itemOffer" && selected.slotId === slot.offer?.offerInstanceId ? "selectedOffer" : ""}`} onClick={() => { if (!payload) return; beginClickSource(payload); setSelected({ kind: "itemOffer", slotId: payload.offerId }); }} {...(payload ? dragController.sourceHandlers(payload) : {})}>{slot.offer ? <><strong>{ITEM_BY_ID[slot.offer.itemId].nameZh}</strong><small>{ITEM_BY_ID[slot.offer.itemId].descriptionZh}</small><span>价格 {ITEM_BY_ID[slot.offer.itemId].price}</span><button disabled={!inventory.includes(null)} onClick={() => { const empty = inventory.findIndex((item) => !item); if (empty >= 0) onAction({ type: "purchaseItemToInventory", offerId: slot.offer!.offerInstanceId, to: { zone: "inventory", slot: empty as 0 | 1 | 2 } }); }}>入仓</button>{selectedMember && <button onClick={() => onAction({ type: "purchaseAndApplyItem", offerId: slot.offer!.offerInstanceId, target: { kind: "units", unitIds: [selectedMember.instanceId] } })}>{ITEM_BY_ID[slot.offer.itemId].kind === "equipment" ? "直接装备" : "直接使用"}</button>}<button onClick={() => onAction({ type: "toggleHold", slotKind: "item", offerId: slot.offer!.offerInstanceId })}>{slot.held ? "取消留意" : "留意"}</button></> : "空格，刷新补货"}</article>;
+        return <article key={slot.slotId} className={`offer ${slot.held ? "held" : ""} ${clickSourceClass} ${selected?.kind === "itemOffer" && selected.slotId === slot.offer?.offerInstanceId ? "selectedOffer" : ""}`} onClick={() => { if (!payload) return; beginClickSource(payload); setSelected({ kind: "itemOffer", slotId: payload.offerId }); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); if (slot.offer) onAction({ type: "toggleHold", slotKind: "item", offerId: slot.offer.offerInstanceId }); }} {...(payload ? dragController.sourceHandlers(payload) : {})}>{slot.offer ? <ItemAvatar itemId={slot.offer.itemId} price={ITEM_BY_ID[slot.offer.itemId].price} /> : "空格，刷新补货"}</article>;
       })}</div>
     </main>
     <aside className="actionsPanel">
       <button onClick={() => onAction({ type: "refresh" })}>刷新</button>
       <button className="primary" onClick={onDepart}>出发</button>
       <ReleaseZone dropRegistry={dropRegistry} legalTarget={clickSource ? isLegalClickTarget({ kind: "releaseZone" }) : false} onClickTarget={() => clickTarget({ kind: "releaseZone" })} />
-      <SelectionDetails selected={selected} member={selectedMember ?? undefined} animalOffer={selectedAnimalOffer} itemOffer={selectedItemOffer} onAction={onAction} />
-      <p>单击选中并查看详情；拖动动物、邂逅、市场道具或仓库道具到合法槽位。</p>
+      <SelectionDetails selected={selected} member={selectedMember ?? undefined} animalOffer={selectedAnimalOffer} itemOffer={selectedItemOffer} />
     </aside>
   </section>;
 }
 
-function SlotList({ members, area, clickSource, firstOpenTeamIndex, isLegalClickTarget, onBeginClickSource, onClickTarget, selected, onSelect, onAction, dropRegistry, sourceHandlers }: { members: Array<TeamMember | null>; area: "team" | "reserve"; clickSource: CampDragPayload | null; firstOpenTeamIndex: number; isLegalClickTarget: (target: CampDropTarget) => boolean; onBeginClickSource: (payload: CampDragPayload) => void; onClickTarget: (target: CampDropTarget) => boolean; selected: SelectedFocus | null; onSelect: (focus: SelectedFocus) => void; onAction: (command: CampCommand) => void; dropRegistry: DropRegistry<CampDropTarget>; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
-  const capacity = area === "team" ? 5 : 3;
+function SlotList({ members, area, clickSource, isLegalClickTarget, onBeginClickSource, onClickTarget, selected, onSelect, dropRegistry, sourceHandlers }: { members: Array<TeamMember | null>; area: "team" | "reserve"; clickSource: CampDragPayload | null; isLegalClickTarget: (target: CampDropTarget) => boolean; onBeginClickSource: (payload: CampDragPayload) => void; onClickTarget: (target: CampDropTarget) => boolean; selected: SelectedFocus | null; onSelect: (focus: SelectedFocus) => void; dropRegistry: DropRegistry<CampDropTarget>; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
   const unregisterById = useRef(new Map<string, () => void>());
   useEffect(() => () => {
     for (const unregister of unregisterById.current.values()) unregister();
@@ -338,17 +337,15 @@ function SlotList({ members, area, clickSource, firstOpenTeamIndex, isLegalClick
     const member = members[index];
     const selectedMember = selected?.kind === "member" && selected.instanceId === member?.instanceId;
     const selectedSlot = selected?.kind === "slot" && selected.area === area && selected.index === index;
-    const backTarget = index < capacity - 1 ? index + 1 : null;
-    const frontTarget = index > 0 ? index - 1 : null;
     const positionLabel = area === "team" ? index === 0 ? "前排" : index === 4 ? "后排" : `${index + 1}位` : "替补";
     const target: CampDropTarget = { kind: "unitSlot", ref: toUnitSlotRef(area, index) };
     const legalTarget = clickSource ? isLegalClickTarget(target) : false;
     const sourceClass = member && clickSource?.kind === "ownedUnit" && clickSource.unitId === member.instanceId ? "clickSource" : "";
-    return <article key={index} ref={(element) => registerSlot(element, index)} className={`animalSlot unitDropTarget ${sourceClass} ${legalTarget ? "legalClickTarget" : ""} ${selectedMember ? "selectedMember" : ""} ${selectedSlot ? "selectedSlot" : ""}`}><small className="slotPositionLabel">{positionLabel}</small>{member ? <><button className="selectCard" onClick={() => { if (onClickTarget(target)) return; onBeginClickSource({ kind: "ownedUnit", unitId: member.instanceId }); onSelect({ kind: "member", instanceId: member.instanceId }); }} {...sourceHandlers({ kind: "ownedUnit", unitId: member.instanceId })}><AnimalAvatar speciesId={member.speciesId} member={member} reserve={area === "reserve"} /></button><div className="tinyActions">{area === "team" && backTarget !== null && <button title="向后排移动" onClick={() => onAction({ type: "moveUnit", unitId: member.instanceId, to: toUnitSlotRef(area, backTarget) })}>←</button>}{area === "team" && frontTarget !== null && <button title="向前排移动" onClick={() => onAction({ type: "moveUnit", unitId: member.instanceId, to: toUnitSlotRef(area, frontTarget) })}>→</button>}{area === "team" && <button onClick={() => onAction({ type: "moveUnit", unitId: member.instanceId, to: { zone: "reserve", slot: 0 } })}>下替补</button>}{area === "reserve" && <button onClick={() => onAction({ type: "moveUnit", unitId: member.instanceId, to: { zone: "formation", slot: firstOpenTeamIndex >= 0 ? firstOpenTeamIndex as 0 | 1 | 2 | 3 | 4 : 0 } })}>上场</button>}{selected?.kind === "member" && selected.instanceId !== member.instanceId && <button onClick={() => onAction({ type: "mergeUnits", sourceUnitId: selected.instanceId, targetUnitId: member.instanceId })}>合成到此</button>}<button onClick={() => onAction({ type: "releaseUnit", unitId: member.instanceId })}>告别</button></div></> : <button className="emptySlotButton" onClick={() => { if (onClickTarget(target)) return; onSelect({ kind: "slot", area, index }); }}>空位</button>}</article>;
+    return <article key={index} ref={(element) => registerSlot(element, index)} className={`animalSlot unitDropTarget ${sourceClass} ${legalTarget ? "legalClickTarget" : ""} ${selectedMember ? "selectedMember" : ""} ${selectedSlot ? "selectedSlot" : ""}`}><small className="slotPositionLabel">{positionLabel}</small>{member ? <div className="selectCard" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; onBeginClickSource({ kind: "ownedUnit", unitId: member.instanceId }); onSelect({ kind: "member", instanceId: member.instanceId }); }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); if (onClickTarget(target)) return; onBeginClickSource({ kind: "ownedUnit", unitId: member.instanceId }); onSelect({ kind: "member", instanceId: member.instanceId }); }} {...sourceHandlers({ kind: "ownedUnit", unitId: member.instanceId })}><AnimalAvatar speciesId={member.speciesId} member={member} reserve={area === "reserve"} /></div> : <div className="emptySlotButton" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; onSelect({ kind: "slot", area, index }); }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); if (onClickTarget(target)) return; onSelect({ kind: "slot", area, index }); }}>空位</div>}</article>;
   })}</div>;
 }
 
-function InventoryList({ clickSource, inventory, isLegalClickTarget, onBeginClickSource, onClickTarget, selectedMember, onAction, dropRegistry, sourceHandlers }: { clickSource: CampDragPayload | null; inventory: ReturnType<typeof inventoryItems>; isLegalClickTarget: (target: CampDropTarget) => boolean; onBeginClickSource: (payload: CampDragPayload) => void; onClickTarget: (target: CampDropTarget) => boolean; selectedMember?: TeamMember; onAction: (command: CampCommand) => void; dropRegistry: DropRegistry<CampDropTarget>; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
+function InventoryList({ clickSource, inventory, isLegalClickTarget, onBeginClickSource, onClickTarget, dropRegistry, sourceHandlers }: { clickSource: CampDragPayload | null; inventory: ReturnType<typeof inventoryItems>; isLegalClickTarget: (target: CampDropTarget) => boolean; onBeginClickSource: (payload: CampDragPayload) => void; onClickTarget: (target: CampDropTarget) => boolean; dropRegistry: DropRegistry<CampDropTarget>; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
   const unregisterById = useRef(new Map<string, () => void>());
   useEffect(() => () => {
     for (const unregister of unregisterById.current.values()) unregister();
@@ -370,7 +367,7 @@ function InventoryList({ clickSource, inventory, isLegalClickTarget, onBeginClic
     const target: CampDropTarget = { kind: "inventorySlot", ref: { zone: "inventory", slot: i as 0 | 1 | 2 } };
     const legalTarget = clickSource ? isLegalClickTarget(target) : false;
     const sourceClass = item && clickSource?.kind === "inventoryItem" && clickSource.itemInstanceId === item.instanceId ? "clickSource" : "";
-    return <article className={`miniCard unitDropTarget ${sourceClass} ${legalTarget ? "legalClickTarget" : ""}`} ref={(element) => registerSlot(element, i)} key={i}>{item ? <div onClick={() => { if (onClickTarget(target)) return; onBeginClickSource({ kind: "inventoryItem", itemInstanceId: item.instanceId }); }} {...sourceHandlers({ kind: "inventoryItem", itemInstanceId: item.instanceId })}><strong>{ITEM_BY_ID[item.itemId].nameZh}</strong><small>{ITEM_BY_ID[item.itemId].descriptionZh}</small>{selectedMember && <button onClick={() => onAction({ type: "applyInventoryItem", itemInstanceId: item.instanceId, target: { kind: "units", unitIds: [selectedMember.instanceId] } })}>{ITEM_BY_ID[item.itemId].kind === "equipment" ? "装备" : "使用"}</button>}</div> : <button className="emptySlotButton" onClick={() => { if (onClickTarget(target)) return; }}>空仓库</button>}</article>;
+    return <article className={`miniCard unitDropTarget ${sourceClass} ${legalTarget ? "legalClickTarget" : ""}`} ref={(element) => registerSlot(element, i)} key={i}>{item ? <div className="selectCard itemCard" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; onBeginClickSource({ kind: "inventoryItem", itemInstanceId: item.instanceId }); }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); if (onClickTarget(target)) return; onBeginClickSource({ kind: "inventoryItem", itemInstanceId: item.instanceId }); }} {...sourceHandlers({ kind: "inventoryItem", itemInstanceId: item.instanceId })}><ItemAvatar itemId={item.itemId} /></div> : <div className="emptySlotButton" role="button" tabIndex={0} onClick={() => { if (onClickTarget(target)) return; }} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); onClickTarget(target); }}>空仓库</div>}</article>;
   })}</div>;
 }
 
@@ -396,8 +393,8 @@ function ReleaseZone({ dropRegistry, legalTarget, onClickTarget }: { dropRegistr
   </button>;
 }
 
-function SelectionDetails({ selected, member, animalOffer, itemOffer, onAction }: { selected: SelectedFocus | null; member?: TeamMember; animalOffer?: NonNullable<ExpeditionState["camp"]>["animalOffers"][number]; itemOffer?: NonNullable<ExpeditionState["camp"]>["itemOffers"][number]; onAction: (command: CampCommand) => void }) {
-  if (!selected) return <div className="detailPanel"><strong>未选中</strong><p>单击动物、市场格或空位查看详情。</p></div>;
+function SelectionDetails({ selected, member, animalOffer, itemOffer }: { selected: SelectedFocus | null; member?: TeamMember; animalOffer?: NonNullable<ExpeditionState["camp"]>["animalOffers"][number]; itemOffer?: NonNullable<ExpeditionState["camp"]>["itemOffers"][number] }) {
+  if (!selected) return <div className="detailPanel"><strong>未选中</strong><p>营地详情会显示在这里。</p></div>;
   if (member) {
     const animal = ANIMAL_BY_ID[member.speciesId];
     const level = memberLevel(member);
@@ -405,13 +402,13 @@ function SelectionDetails({ selected, member, animalOffer, itemOffer, onAction }
   }
   if (animalOffer?.offer) {
     const animal = ANIMAL_BY_ID[animalOffer.offer.speciesId];
-    return <div className="detailPanel selectedOfferPanel"><strong>{animal.nameZh}</strong><p>{animal.ability.nameZh}</p><p>{animal.ability.descriptionByLevel[0]}</p><button onClick={() => onAction({ type: "toggleHold", slotKind: "animal", offerId: animalOffer.offer!.offerInstanceId })}>{animalOffer.held ? "取消留意" : "留意"}</button></div>;
+    return <div className="detailPanel selectedOfferPanel"><strong>{animal.nameZh}</strong><p>{animal.ability.nameZh}</p><p>{animal.ability.descriptionByLevel[0]}</p><p>留意状态：{animalOffer.held ? "已留意" : "未留意"}</p></div>;
   }
   if (itemOffer?.offer) {
     const item = ITEM_BY_ID[itemOffer.offer.itemId];
-    return <div className="detailPanel selectedOfferPanel"><strong>{item.nameZh}</strong><p>{item.descriptionZh}</p><p>价格 {item.price} · {item.kind === "food" ? "食物" : "装备"}</p><button onClick={() => onAction({ type: "toggleHold", slotKind: "item", offerId: itemOffer.offer!.offerInstanceId })}>{itemOffer.held ? "取消留意" : "留意"}</button></div>;
+    return <div className="detailPanel selectedOfferPanel"><strong>{item.nameZh}</strong><p>{item.descriptionZh}</p><p>价格 {item.price} · {item.kind === "food" ? "食物" : "装备"}</p><p>留意状态：{itemOffer.held ? "已留意" : "未留意"}</p></div>;
   }
-  if (selected.kind === "slot") return <div className="detailPanel selectedSlotPanel"><strong>{selected.area === "team" ? "战斗队" : "替补"}空位</strong><p>把市场动物或己方动物拖到这里放置。拖到已有同种动物上会合成。</p></div>;
+  if (selected.kind === "slot") return <div className="detailPanel selectedSlotPanel"><strong>{selected.area === "team" ? "战斗队" : "替补"}空位</strong><p>可接收合法动物来源。</p></div>;
   return <div className="detailPanel"><strong>空内容</strong></div>;
 }
 
@@ -431,6 +428,11 @@ function AnimalAvatar({ speciesId, member, reserve }: { speciesId: SpeciesId; me
   return <div className="avatarBlock"><div className="glyph">{animal.visual.emoji || animal.visual.fallbackGlyph}</div><strong>{animal.nameZh} {["Ⅰ", "Ⅱ", "Ⅲ"][level - 1]}</strong><small>{animal.habitats.map((h) => h === "water" ? "水" : h === "land" ? "陆" : "空").join(" ")}</small>{member && <small>✊ {attack} <span className="heart">♥</span> {health} · {member.bondXp}/6 {member.equipment ? "· 装备" : ""} {reserve ? "· Zzz" : ""}</small>}</div>;
 }
 
+function ItemAvatar({ itemId, price }: { itemId: ItemId; price?: number }) {
+  const item = ITEM_BY_ID[itemId];
+  return <div className="avatarBlock itemAvatarBlock"><div className="glyph itemGlyph">{item.visual.emoji || item.visual.fallbackGlyph}</div><strong>{item.nameZh}</strong><small>{item.kind === "food" ? "食物" : "装备"}</small><small>{item.descriptionZh}</small>{price !== undefined && <span className="cardMeta">价格 {price}</span>}</div>;
+}
+
 function Discovery({ clickSource, discovery, onAction, onBeginClickSource, sourceHandlers }: { clickSource: CampDragPayload | null; discovery: ExpeditionState["pendingDiscoveries"][number]; onAction: (command: CampCommand) => void; onBeginClickSource: (payload: CampDragPayload) => void; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
   return <div className="discovery discoveryCards">
     <strong>高级发现：Tier {discovery.targetTier}</strong>
@@ -439,48 +441,16 @@ function Discovery({ clickSource, discovery, onAction, onBeginClickSource, sourc
       const sourceClass = clickSource?.kind === "upgradeDiscovery" && clickSource.discoveryId === discovery.discoveryId && clickSource.speciesId === speciesId ? "clickSource" : "";
       return <article key={speciesId} className={`offer ${sourceClass}`} onClick={() => onBeginClickSource(payload)} {...sourceHandlers(payload)}><AnimalAvatar speciesId={speciesId} /></article>;
     })}
-      <button className="offer supplyChoice" onClick={() => onAction({ type: "chooseDiscoverySupply", discoveryId: discovery.discoveryId })}><strong>+1 补给</strong><small>带走现成补给</small></button>
+      <article className="offer supplyChoice" role="button" tabIndex={0} onClick={() => onAction({ type: "chooseDiscoverySupply", discoveryId: discovery.discoveryId })} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); onAction({ type: "chooseDiscoverySupply", discoveryId: discovery.discoveryId }); }}><strong>+1 补给</strong><small>带走现成补给</small></article>
     </div>
   </div>;
 }
 
-function PendingRecruit({ clickSource, expedition, member, onAction, onBeginClickSource, sourceHandlers }: { clickSource: CampDragPayload | null; expedition: ExpeditionState; member: TeamMember; onAction: (command: CampCommand) => void; onBeginClickSource: (payload: CampDragPayload) => void; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
-  const formation = formationMembers(expedition);
-  const reserve = reserveMembers(expedition);
-  const teamSlot = firstEmptyFormationSlot(expedition);
-  const reserveSlot = firstEmptyReserveSlot(expedition);
-  const pendingFormationSlot = teamSlot >= 0 ? teamSlot as 0 | 1 | 2 | 3 | 4 : null;
-  const pendingReserveSlot = reserveSlot >= 0 ? reserveSlot as 0 | 1 | 2 : null;
-  const teamFull = teamSlot < 0;
-  const reserveFull = reserveSlot < 0;
+function PendingRecruit({ clickSource, member, onBeginClickSource, sourceHandlers }: { clickSource: CampDragPayload | null; member: TeamMember; onBeginClickSource: (payload: CampDragPayload) => void; sourceHandlers: PointerDragSourceHandlers<CampDragPayload> }) {
   const payload: CampDragPayload = { kind: "pendingRecruit" };
   return <div className={`discovery pendingRecruit ${clickSource?.kind === "pendingRecruit" ? "clickSource" : ""}`}>
     <strong>待安置：{ANIMAL_BY_ID[member.speciesId].nameZh}</strong>
-    <button className="selectCard pendingRecruitCard" onClick={() => onBeginClickSource(payload)} {...sourceHandlers(payload)}><AnimalAvatar speciesId={member.speciesId} member={member} /></button>
-    <div className="pendingActions">
-      <button disabled={teamFull} onClick={() => pendingFormationSlot !== null && onAction({ type: "placePendingRecruit", to: { zone: "formation", slot: pendingFormationSlot } })}>放入战斗队</button>
-      <button disabled={reserveFull} onClick={() => pendingReserveSlot !== null && onAction({ type: "placePendingRecruit", to: { zone: "reserve", slot: pendingReserveSlot } })}>放入替补</button>
-      <button onClick={() => onAction({ type: "discardPendingRecruit" })}>告别待安置</button>
-    </div>
-    {(teamFull || reserveFull) && <small>满员时可以先告别腾位，或直接替换指定位置。</small>}
-    <div className="pendingReplaceGrid">
-      <section>
-        <strong>战斗队</strong>
-        {formation.map((target, index) => target ? <div className="replaceRow" key={target.instanceId}>
-          <span>{index + 1}. {ANIMAL_BY_ID[target.speciesId].nameZh} Lv{memberLevel(target)} · {target.bondXp}/6</span>
-          <button onClick={() => onAction({ type: "placePendingRecruit", to: { zone: "formation", slot: index as 0 | 1 | 2 | 3 | 4 }, replaceUnitId: target.instanceId })}>替换</button>
-          <button onClick={() => onAction({ type: "releaseUnit", unitId: target.instanceId })}>告别</button>
-        </div> : null)}
-      </section>
-      <section>
-        <strong>替补</strong>
-        {presentMembers(reserve).length ? reserve.map((target, index) => target ? <div className="replaceRow" key={target.instanceId}>
-          <span>{index + 1}. {ANIMAL_BY_ID[target.speciesId].nameZh} Lv{memberLevel(target)} · {target.bondXp}/6</span>
-          <button onClick={() => onAction({ type: "placePendingRecruit", to: { zone: "reserve", slot: index as 0 | 1 | 2 }, replaceUnitId: target.instanceId })}>替换</button>
-          <button onClick={() => onAction({ type: "releaseUnit", unitId: target.instanceId })}>告别</button>
-        </div> : null) : <small>替补为空，可以直接放入。</small>}
-      </section>
-    </div>
+    <div className="selectCard pendingRecruitCard" role="button" tabIndex={0} onClick={() => onBeginClickSource(payload)} onKeyDown={(event) => { if (!isActivationKey(event)) return; event.preventDefault(); onBeginClickSource(payload); }} {...sourceHandlers(payload)}><AnimalAvatar speciesId={member.speciesId} member={member} /></div>
   </div>;
 }
 

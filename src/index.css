@@ -112,33 +112,6 @@ small { color: #5d6d61; }
   justify-items: start;
   text-align: left;
 }
-.pendingActions, .pendingReplaceGrid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-.pendingReplaceGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.45fr);
-}
-.pendingReplaceGrid section {
-  min-width: 0;
-  display: grid;
-  align-content: start;
-  gap: 0.3rem;
-}
-.replaceRow {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 0.3rem;
-  align-items: center;
-}
-.replaceRow span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .slotList, .offerGrid, .collectionGrid {
   display: grid;
   gap: 0.5rem;
@@ -156,6 +129,7 @@ small { color: #5d6d61; }
   background: #fffef8;
   padding: 0.5rem;
 }
+.offer { position: relative; }
 .slotPositionLabel {
   display: inline-flex;
   margin-bottom: 0.25rem;
@@ -167,6 +141,19 @@ small { color: #5d6d61; }
 }
 .offer.locked { opacity: 0.55; background: #edf0e8; }
 .offer.held { outline: 2px solid #2d6b50; }
+.offer.held::before {
+  content: "留意";
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  border-radius: 999px;
+  background: #2d6b50;
+  color: white;
+  padding: 0.06rem 0.36rem;
+  font-size: 0.72rem;
+  font-weight: 900;
+  pointer-events: none;
+}
 .selectedMember { outline: 3px solid #3b6eea; background: #eef4ff; }
 .selectedSlot { outline: 3px dashed #b16b00; background: #fff7e8; }
 .selectedOffer { outline: 3px solid #1d8f67; background: #edf9f3; }
@@ -241,14 +228,24 @@ small { color: #5d6d61; }
   font-size: 1.55rem;
   font-weight: 800;
 }
+.itemAvatarBlock small {
+  line-height: 1.25;
+}
+.itemGlyph {
+  background: #e7e1f2;
+}
+.cardMeta {
+  color: #6a4a00;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
 .heart { color: #c33d35; font-weight: 800; }
-.tinyActions, .toolbar {
+.toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.35rem;
 }
-.tinyActions button { min-height: 32px; padding: 0.25rem 0.4rem; font-size: 0.78rem; }
 .battleScreen { display: grid; grid-template-rows: auto minmax(260px, 1fr) auto auto minmax(0, 96px); gap: 0.45rem; }
 .battleHud {
   display: grid;
@@ -550,7 +547,6 @@ small { color: #5d6d61; }
   .campLayout { grid-template-columns: 170px 1fr 120px; }
   .slotList { grid-template-columns: repeat(5, minmax(72px, 1fr)); }
   .offerGrid { grid-template-columns: repeat(5, minmax(84px, 1fr)); }
-  .pendingReplaceGrid { grid-template-columns: 1fr; }
   .glyph { width: 34px; height: 34px; font-size: 1.15rem; }
   button { min-height: 44px; padding: 0.3rem 0.45rem; }
 }
