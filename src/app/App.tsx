@@ -9,6 +9,7 @@ import { completeSuccessResolution, createExpedition, finishBattleReport, prepar
 import { applyChallengeReward, applyRewardChoice, createRewardChoices } from "../domain/rewardEngine";
 import type { AppSave, BattleEvent, BattleOutput, CampCommand, ExpeditionState, ItemId, ItemTargetPreview, RegisteredTeam, RewardChoice, Side, SpeciesId, TeamMember, TeamSnapshotUnit, UnitSlotRef } from "../domain/types";
 import { resolveBattle } from "../domain/battleEngine";
+import { compileBattleCues, formatBattleCueTimeline } from "../presentation/battleCueCompiler";
 import { exportSave, importSaveJson, loadSave, saveAppSave, resetSave, stagingInfo, clearStaging } from "../storage/localRepository";
 import { createDropRegistry } from "./interaction/dropRegistry";
 import { buildCampClickCommand, buildCampDragCommand, campClickSourceAfterKey, preflightCampClickTarget, preflightCampDragCommand, resolveCampItemPreview } from "./interaction/campDragMapping";
@@ -498,26 +499,29 @@ function PendingRecruit({ clickSource, member, onBeginClickSource, sourceHandler
 }
 
 function BattleView({ expedition, battle, onDone, settings, updateSettings }: { expedition: ExpeditionState; battle: BattleOutput; onDone: () => void; settings: AppSave["settings"]; updateSettings: (settings: AppSave["settings"]) => void }) {
-  const [cursor, setCursor] = useState(expedition.pendingBattle?.playbackCursor ?? 0);
+  const cues = useMemo(() => compileBattleCues(battle.events), [battle.events]);
+  const debugTimeline = useMemo(() => formatBattleCueTimeline(cues), [cues]);
+  const [cursor, setCursor] = useState(Math.min(expedition.pendingBattle?.playbackCursor ?? 0, Math.max(0, cues.length - 1)));
   const [playing, setPlaying] = useState(true);
-  const event = battle.events[cursor] ?? battle.events[0];
+  const cue = cues[cursor] ?? cues[0];
+  const event = battle.events[cue?.eventEndIndex ?? 0] ?? battle.events[0];
   const env = expedition.pendingBattle?.input.environmentId ?? "meadow";
   const input = expedition.pendingBattle?.input;
-  const atResult = cursor >= battle.events.length - 1;
-  const sourceId = event?.sourceUnitId;
-  const targetId = event?.targetUnitId;
-  const cueEnd = useMemo(() => battleCueEndIndex(battle.events, cursor), [battle.events, cursor]);
+  const atResult = cursor >= cues.length - 1;
+  const sourceId = cue?.sourceUnitIds[0] ?? event?.sourceUnitId;
+  const targetId = cue?.targetUnitIds[0] ?? event?.targetUnitId;
+  const cueEnd = cue?.eventEndIndex ?? 0;
   const frameById = useMemo(() => buildBattleFrame(input?.playerTeam.units ?? [], input?.opponentTeam.units ?? [], battle.events.slice(0, cueEnd + 1)), [battle.events, cueEnd, input?.opponentTeam.units, input?.playerTeam.units]);
-  const activeMoveById = useMemo(() => activeMovementEventsByUnitId(battle.events, cursor), [battle.events, cursor]);
+  const activeMoveById = useMemo(() => activeMovementEventsByUnitId(battle.events, cue?.eventStartIndex ?? 0), [battle.events, cue?.eventStartIndex]);
 
   useEffect(() => {
     if (!playing || atResult) return;
     const delay = Math.max(90, 700 / settings.battleSpeed);
     const timer = window.setTimeout(() => {
-      setCursor((current) => Math.min(battle.events.length - 1, current + 1));
+      setCursor((current) => Math.min(cues.length - 1, current + 1));
     }, settings.reduceMotion ? Math.min(delay, 120) : delay);
     return () => window.clearTimeout(timer);
-  }, [playing, atResult, battle.events.length, settings.battleSpeed, settings.reduceMotion, cursor]);
+  }, [playing, atResult, cues.length, settings.battleSpeed, settings.reduceMotion, cursor]);
 
   useEffect(() => {
     if (atResult) setPlaying(false);
@@ -526,7 +530,7 @@ function BattleView({ expedition, battle, onDone, settings, updateSettings }: { 
   return <section className="screen battleScreen">
     <div className="battleHud">
       <div className="envBadge"><strong>{ENVIRONMENT_BY_ID[env].nameZh}</strong><span>{ENVIRONMENT_BY_ID[env].ruleZh}</span></div>
-      <div className="toolbar battleControls"><button onClick={() => setPlaying((value) => !value)}>{playing ? "暂停" : "播放"}</button><button onClick={() => { setPlaying(false); setCursor((i) => Math.min(battle.events.length - 1, i + 1)); }}>单步</button><button onClick={() => { setPlaying(false); setCursor(battle.events.length - 1); }}>跳到结果</button>{[0.5, 1, 2, 4].map((speed) => <button className={settings.battleSpeed === speed ? "selected" : ""} key={speed} onClick={() => updateSettings({ ...settings, battleSpeed: speed as 0.5 | 1 | 2 | 4 })}>{speed}x</button>)}<button onClick={() => updateSettings({ ...settings, reduceMotion: !settings.reduceMotion })}>减少动画</button></div>
+      <div className="toolbar battleControls"><button onClick={() => setPlaying((value) => !value)}>{playing ? "暂停" : "播放"}</button><button onClick={() => { setPlaying(false); setCursor((i) => Math.min(cues.length - 1, i + 1)); }}>单步</button><button onClick={() => { setPlaying(false); setCursor(cues.length - 1); }}>跳到结果</button>{[0.5, 1, 2, 4].map((speed) => <button className={settings.battleSpeed === speed ? "selected" : ""} key={speed} onClick={() => updateSettings({ ...settings, battleSpeed: speed as 0.5 | 1 | 2 | 4 })}>{speed}x</button>)}<button onClick={() => updateSettings({ ...settings, reduceMotion: !settings.reduceMotion })}>减少动画</button></div>
     </div>
     <div className={`battleStage scenicBattleStage ${settings.reduceMotion ? "reduceMotion" : ""}`}>
       <div className="mountainLayer" />
@@ -536,12 +540,13 @@ function BattleView({ expedition, battle, onDone, settings, updateSettings }: { 
       <div className="centerLine"><span>前排交锋</span></div>
       <BattleQueue side="opponent" units={input?.opponentTeam.units ?? []} frameById={frameById} sourceId={sourceId} targetId={targetId} activeMoveById={activeMoveById} />
     </div>
-    <p className="currentEvent">{event?.messageZh}</p>
+    <p className="currentEvent"><strong>{cue?.labelZh}</strong>{cue ? `：${cue.summaryZh}` : event?.messageZh}</p>
     <div className={`resultDock ${atResult ? "ready" : ""}`}>
-      <span>{atResult ? "遭遇回放已结束，可以查看报告继续探险。" : `回放进度 ${cursor + 1}/${battle.events.length}`}</span>
+      <span>{atResult ? "遭遇回放已结束，可以查看报告继续探险。" : `回放进度 ${cursor + 1}/${cues.length}`}</span>
       <button className="primary" disabled={!atResult} onClick={onDone}>查看报告 / 继续</button>
     </div>
-    <ol className="log">{battle.events.slice(Math.max(0, cursor - 7), cursor + 1).map((item) => <li className={`log-${item.type}`} key={item.eventId}>{eventDelta(item)}{item.messageZh}</li>)}</ol>
+    <ol className="log">{battle.events.slice(Math.max(0, cueEnd - 7), cueEnd + 1).map((item) => <li className={`log-${item.type}`} key={item.eventId}>{eventDelta(item)}{item.messageZh}</li>)}</ol>
+    <details><summary>调试时间线</summary><pre className="debugTimeline">{debugTimeline}</pre></details>
     <details><summary>完整日志</summary><ol>{battle.events.map((item) => <li key={item.eventId}>{item.messageZh}</li>)}</ol></details>
   </section>;
 }

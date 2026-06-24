@@ -526,6 +526,17 @@ small { color: #5d6d61; }
   border-color: #2d6b50;
   box-shadow: 0 0 0 2px rgba(45, 107, 80, 0.12);
 }
+.debugTimeline {
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.6rem;
+  border: 1px solid #d8ddd1;
+  border-radius: 6px;
+  background: #fbfcf7;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
 .rotateOverlay { display: none; }
 
 @keyframes idlePulse {
