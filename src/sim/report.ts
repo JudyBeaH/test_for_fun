@@ -1,11 +1,15 @@
 import { ANIMALS } from "../content/animals";
+import { CONTENT_VERSION } from "../content/constants";
 import { ENVIRONMENTS } from "../content/environments";
 import { ITEMS } from "../content/items";
-import type { EnvironmentId, ItemId, SpeciesId } from "../domain/types";
+import type { AnimalTier, EnvironmentId, ItemId, SpeciesId } from "../domain/types";
 
 export interface SimReport {
   runs: number;
   seed: number;
+  contentVersion: string;
+  animalCount: number;
+  animalTierCounts: Record<AnimalTier, number>;
   successRate: number;
   averageBadges: number;
   averageRounds: number;
@@ -41,6 +45,15 @@ export function createAccumulator(runs: number, seed: number): SimReport {
   return {
     runs,
     seed,
+    contentVersion: CONTENT_VERSION,
+    animalCount: ANIMALS.length,
+    animalTierCounts: {
+      1: ANIMALS.filter((animal) => animal.tier === 1).length,
+      2: ANIMALS.filter((animal) => animal.tier === 2).length,
+      3: ANIMALS.filter((animal) => animal.tier === 3).length,
+      4: ANIMALS.filter((animal) => animal.tier === 4).length,
+      5: ANIMALS.filter((animal) => animal.tier === 5).length,
+    },
     successRate: 0,
     averageBadges: 0,
     averageRounds: 0,

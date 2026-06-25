@@ -25,6 +25,7 @@ interface BattleContext {
   rng: Rng;
   events: BattleEvent[];
   sequence: number;
+  summonSequence: number;
   diagnostics: string[];
   contribution: ContributionSummary;
   phaseId: BattlePhaseId;
@@ -35,6 +36,7 @@ interface BattleContext {
 
 interface TriggerOptions {
   committed?: boolean;
+  allowRetreatedSource?: boolean;
 }
 
 interface QueuedTrigger {
@@ -87,6 +89,21 @@ function addEvent(ctx: BattleContext, event: Omit<BattleEvent, "eventId" | "sequ
     simultaneousGroupId: event.simultaneousGroupId ?? ctx.simultaneousGroupId,
     ...event,
   });
+}
+
+function ensureContributionRow(ctx: BattleContext, unit: BattleUnit): void {
+  if (ctx.contribution.byUnitId[unit.unitId]) return;
+  ctx.contribution.byUnitId[unit.unitId] = {
+    speciesId: unit.speciesId,
+    side: unit.originOwner,
+    damageDealt: 0,
+    damageBlocked: 0,
+    positiveStatsGranted: 0,
+    enemyAttackReduced: 0,
+    abilityTriggers: 0,
+    usefulMoves: 0,
+    total: 0,
+  };
 }
 
 function withEventContext(ctx: BattleContext, patch: Partial<Pick<BattleContext, "batchId" | "exchangeId" | "phaseId" | "simultaneousGroupId">>, run: () => void): void {
@@ -176,6 +193,14 @@ function selectTargets(selector: TargetSelector, source: BattleUnit, player: Bat
   }
 }
 
+function emptySummonSlot(source: BattleUnit, player: BattleUnit[], opponent: BattleUnit[], placement: Extract<EffectDef, { kind: "summonUnit" }>["placement"]) {
+  const sourcePosition = positionForSlot(source.slot);
+  const positions = placement === "sourceThenBack"
+    ? [sourcePosition, ...[1, 2, 3, 4].map((offset) => sourcePosition + offset).filter((position) => position <= 4), ...[0, 1, 2, 3, 4].filter((position) => position < sourcePosition)]
+    : placement === "frontmostEmpty" ? [0, 1, 2, 3, 4] : [4, 3, 2, 1, 0];
+  return new BoardMutationService(allUnits(player, opponent)).firstEmptySlot(source.side, positions);
+}
+
 function gainShield(target: BattleUnit, amount: number, source: BattleUnit | undefined, ctx: BattleContext, messageZh?: string): void {
   const before = target.shield;
   target.shield += amount;
@@ -246,34 +271,73 @@ function reactToDamage(target: BattleUnit, ctx: BattleContext): void {
 
 function applyEffect(effect: EffectDef, source: BattleUnit, player: BattleUnit[], opponent: BattleUnit[], ctx: BattleContext, attacker?: BattleUnit, options: TriggerOptions = {}): DamageResult[] {
   const damageResults: DamageResult[] = [];
-  if ((source.retreated || source.health <= 0) && !options.committed) {
+  if ((source.retreated || source.health <= 0) && !options.committed && !options.allowRetreatedSource) {
     addEvent(ctx, { type: "abilitySourceUnavailable", sourceUnitId: source.unitId, side: source.side, messageZh: `${unitName(source)}已经退场，排队技能失效。`, metadata: { effect } });
     return damageResults;
   }
-  if (effect.kind === "moveSelf") {
+  if (effect.kind === "summonUnit") {
+    const slot = emptySummonSlot(source, player, opponent, effect.placement);
+    if (!slot) {
+      addEvent(ctx, { type: "abilityNoTarget", sourceUnitId: source.unitId, side: source.side, messageZh: `${unitName(source)}尝试呼唤同伴，但没有空位。`, metadata: { effect } });
+      return damageResults;
+    }
+    ctx.summonSequence += 1;
+    const summoned: BattleUnit = {
+      unitId: `summon_${source.originOwner}_${source.unitId}_${ctx.summonSequence}`,
+      side: source.side,
+      originOwner: source.originOwner,
+      slot,
+      speciesId: effect.speciesId,
+      level: effect.level,
+      attack: effect.attack,
+      health: effect.health,
+      maxHealth: effect.health,
+      shield: 0,
+      position: positionForSlot(slot),
+      triggerCounts: {},
+      statuses: [],
+      retreated: false,
+    };
+    if (source.originOwner === "player") player.push(summoned);
+    else opponent.push(summoned);
+    ensureContributionRow(ctx, summoned);
+    ctx.contribution.byUnitId[source.unitId].positiveStatsGranted += effect.attack + effect.health;
+    addEvent(ctx, {
+      type: "unitSummoned",
+      sourceUnitId: source.unitId,
+      targetUnitId: summoned.unitId,
+      side: summoned.side,
+      after: summoned.position,
+      messageZh: `${unitName(source)}呼唤${unitName(summoned)}加入本次遭遇。`,
+      metadata: { effect, slot, originOwner: summoned.originOwner, combatSide: summoned.side, speciesId: summoned.speciesId },
+    });
+    return damageResults;
+  }
+  if (effect.kind === "swapSelfWithNearestAlly") {
     const board = new BoardMutationService(allUnits(player, opponent));
     const beforeAllies = board.activeSideUnits(source.side);
-    const promoted = effect.offset > 0 ? beforeAllies[beforeAllies.findIndex((unit) => unit.unitId === source.unitId) + 1] : beforeAllies[Math.max(0, beforeAllies.findIndex((unit) => unit.unitId === source.unitId) + effect.offset)];
-    const result = board.moveWithinSide(source.unitId, effect.offset);
+    const sourceIndex = beforeAllies.findIndex((unit) => unit.unitId === source.unitId);
+    const partner = effect.direction === "behind"
+      ? beforeAllies.find((_unit, index) => index > sourceIndex)
+      : [...beforeAllies].reverse().find((_unit, reverseIndex) => beforeAllies.length - 1 - reverseIndex < sourceIndex);
+    const result = partner ? board.swap(source.slot, partner.slot) : { ok: false, moved: [] };
     if (!result.ok || result.moved.length === 0) {
       addEvent(ctx, { type: "abilityNoTarget", sourceUnitId: source.unitId, side: source.side, messageZh: `${unitName(source)}尝试移动，但队列没有变化。`, metadata: { effect } });
       return damageResults;
     }
     ctx.contribution.byUnitId[source.unitId].usefulMoves += 1;
-    const movedRecords = [...result.moved].sort((a, b) => Number(b.unit.unitId === source.unitId) - Number(a.unit.unitId === source.unitId));
-    for (const record of movedRecords) {
-      const isSource = record.unit.unitId === source.unitId;
+    for (const record of result.moved) {
       addEvent(ctx, {
         type: "unitMoved",
         sourceUnitId: record.unit.unitId,
         side: record.unit.side,
         before: record.beforePosition,
         after: record.afterPosition,
-        messageZh: isSource ? `${unitName(source)}跃至后位。` : `${unitName(record.unit)}补位换位。`,
-        metadata: { beforeSlot: record.beforeSlot, afterSlot: record.afterSlot, fromOrder: record.fromOrder, toOrder: record.toOrder, causeUnitId: source.unitId },
+        messageZh: `${unitName(record.unit)}位置改变。`,
+        metadata: { beforeSlot: record.beforeSlot, afterSlot: record.afterSlot, fromOrder: record.fromOrder, toOrder: record.toOrder, causeUnitId: source.unitId, effect },
       });
     }
-    if (promoted && effect.buffPromotedAllyAttack) modifyAttack(promoted, effect.buffPromotedAllyAttack, source, ctx, `${unitName(source)}跃至后位，${unitName(promoted)}补到前方并获得 +${effect.buffPromotedAllyAttack} 攻击。`);
+    if (partner && effect.buffSwappedAllyAttack) modifyAttack(partner, effect.buffSwappedAllyAttack, source, ctx, `${unitName(source)}跃至后位，${unitName(partner)}补到前方并获得 +${effect.buffSwappedAllyAttack} 攻击。`);
     return damageResults;
   }
   const targets = selectTargets(effect.target, source, player, opponent, ctx, attacker);
@@ -286,10 +350,38 @@ function applyEffect(effect: EffectDef, source: BattleUnit, player: BattleUnit[]
       const results = applyDamageBatch(player, opponent, [{ sourceUnitId: source.unitId, targetUnitId: target.unitId, amount: effect.amount, kind: "ability" }], ctx);
       damageResults.push(...results);
     }
+    if (effect.kind === "dealDamageAndGainOnRetreat") {
+      const results = applyDamageBatch(player, opponent, [{ sourceUnitId: source.unitId, targetUnitId: target.unitId, amount: effect.damage, kind: "ability" }], ctx);
+      damageResults.push(...results);
+      if (results.some((result) => result.targetUnitId === target.unitId && result.healthAfter <= 0)) {
+        if (effect.attackGain) modifyAttack(source, effect.attackGain, source, ctx, `${unitName(source)}击退目标，获得 +${effect.attackGain} 攻击。`);
+        if (effect.healthGain) modifyHealth(source, effect.healthGain, source, ctx, `${unitName(source)}击退目标，获得 +${effect.healthGain} 体力。`);
+      }
+    }
     if (effect.kind === "modifyAttack") modifyAttack(target, effect.amount, source, ctx);
     if (effect.kind === "modifyHealth") modifyHealth(target, effect.amount, source, ctx);
     if (effect.kind === "gainShield") gainShield(target, effect.amount, source, ctx);
     if (effect.kind === "reduceAttack") reduceAttack(target, effect.amount, source, ctx);
+    if (effect.kind === "pushTarget" || effect.kind === "pullTarget") {
+      const board = new BoardMutationService(allUnits(player, opponent));
+      const result = effect.kind === "pushTarget" ? board.push(target.unitId, effect.offset) : board.pull(target.unitId, effect.offset);
+      if (!result.ok || result.moved.length === 0) {
+        addEvent(ctx, { type: "abilityNoTarget", sourceUnitId: source.unitId, targetUnitId: target.unitId, side: source.side, messageZh: `${unitName(source)}尝试改变${unitName(target)}的位置，但队列没有变化。`, metadata: { effect } });
+      } else {
+        ctx.contribution.byUnitId[source.unitId].usefulMoves += 1;
+        for (const record of result.moved) {
+          addEvent(ctx, {
+            type: "unitMoved",
+            sourceUnitId: record.unit.unitId,
+            side: record.unit.side,
+            before: record.beforePosition,
+            after: record.afterPosition,
+            messageZh: `${unitName(source)}改变了${unitName(record.unit)}的位置。`,
+            metadata: { beforeSlot: record.beforeSlot, afterSlot: record.afterSlot, fromOrder: record.fromOrder, toOrder: record.toOrder, causeUnitId: source.unitId, effect },
+          });
+        }
+      }
+    }
     if (effect.kind === "applyBattleStatus") {
       target.statuses.push(effect.status);
       addEvent(ctx, { type: "statusApplied", sourceUnitId: source.unitId, targetUnitId: target.unitId, side: target.side, messageZh: `${unitName(target)}获得状态。`, metadata: { status: effect.status.kind } });
@@ -321,7 +413,7 @@ function processRetreats(player: BattleUnit[], opponent: BattleUnit[], ctx: Batt
   for (const unit of newly) {
     unit.retreated = true;
     addEvent(ctx, { type: "unitRetreated", sourceUnitId: unit.unitId, side: unit.side, messageZh: `${unitName(unit)}退出本次遭遇。`, metadata: {} });
-    damageResults.push(...triggerAbility("selfRetreat", unit, player, opponent, ctx));
+    damageResults.push(...triggerAbility("selfRetreat", unit, player, opponent, ctx, undefined, { allowRetreatedSource: true }));
   }
   for (const retreated of newly) {
     const allies = active(sideUnits(player, opponent, retreated.side)).filter((ally) => ally.unitId !== retreated.unitId);
@@ -401,6 +493,7 @@ export function resolveBattleFromUnits(input: BattleInput, player: BattleUnit[],
     rng: createRng(input.seed),
     events: [],
     sequence: 0,
+    summonSequence: 0,
     diagnostics: [...initialDiagnostics],
     contribution: emptyContribution([...player, ...opponent]),
     phaseId: "setup",

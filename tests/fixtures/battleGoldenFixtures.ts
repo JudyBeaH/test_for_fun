@@ -1,4 +1,5 @@
 import { CONTENT_VERSION, ENGINE_VERSION } from "../../src/content/constants";
+import { ANIMALS } from "../../src/content/animals";
 import type { BattleInput, BattleResult, SpeciesId, TeamSnapshot, TeamSnapshotUnit } from "../../src/domain/types";
 
 type UnitOptions = Partial<Pick<TeamSnapshotUnit, "bondXp" | "initialAttack" | "initialMaxHealth" | "level" | "position">> & {
@@ -25,20 +26,9 @@ export interface BattleGoldenFixture {
   intentionalFutureChangesZh: readonly string[];
 }
 
-const baseStats: Record<SpeciesId, { attack: number; health: number }> = {
-  hedgehog: { attack: 3, health: 5 },
-  frog: { attack: 3, health: 4 },
-  mussel: { attack: 2, health: 6 },
-  swallow: { attack: 2, health: 4 },
-  otter: { attack: 4, health: 4 },
-  hare: { attack: 3, health: 5 },
-  kingfisher: { attack: 4, health: 3 },
-  carp: { attack: 2, health: 7 },
-  crow: { attack: 4, health: 4 },
-  pangolin: { attack: 3, health: 8 },
-  egret: { attack: 5, health: 5 },
-  weasel: { attack: 6, health: 4 },
-};
+const baseStats: Record<SpeciesId, { attack: number; health: number }> = Object.fromEntries(
+  ANIMALS.map((animal) => [animal.id, { attack: animal.baseAttack, health: animal.baseHealth }]),
+) as Record<SpeciesId, { attack: number; health: number }>;
 
 export const MECHANIC_CARRIERS = {
   allyRetreatResponder: "crow",
@@ -159,12 +149,12 @@ export const BATTLE_GOLDEN_FIXTURES: readonly BattleGoldenFixture[] = [
   },
   {
     id: "golden_08_after_attack_move",
-    titleZh: "攻击后移动并让同伴补位",
+    titleZh: "攻击后与最近后方同伴互换",
     covers: ["movement", "afterAttack", "unitMoved"],
     input: input("golden_08_after_attack_move", 508, team([unit(MECHANIC_CARRIERS.afterAttackMover, 0), unit(MECHANIC_CARRIERS.highDamageStriker, 1)]), team([unit(MECHANIC_CARRIERS.sturdyFront, 0)])),
     expected: { result: "win", eventTypes: "battleStarted>statModified>statModified>environmentApplied>attackWindup>attackWindup>attackExchange>damageApplied>damageApplied>abilityTriggered>statModified>abilityTriggered>unitMoved>unitMoved>statModified>attackWindup>attackWindup>attackExchange>shieldAbsorbed>damageApplied>damageApplied>unitRetreated>abilityTriggered>abilityNoTarget>battleEnded", eventCount: 25, finalPlayer: "player_frog_0:frog:4:6:3:0:1:A:-|player_weasel_1:weasel:2:4:7:0:0:A:-", finalOpponent: "opponent_mussel_0:mussel:0:8:2:0:0:R:-", diagnostics: [] },
-    mustRemainZh: ["afterAttack 移动机制会产生自身和补位队友的移动事件。"],
-    intentionalFutureChangesZh: ["P5C 会迁移位置模型，但同侧换位语义需要保持。"],
+    mustRemainZh: ["青蛙攻击后只让自身与最近后方同伴互换，不会在其他动物攻击时触发，也不会推动整条队列。"],
+    intentionalFutureChangesZh: ["P6B 将旧的宽泛 moveSelf 收窄为 swapSelfWithNearestAlly；位置模型可继续调整，但不应恢复队列连带移动。"],
   },
   {
     id: "golden_09_before_attack_buff",
@@ -189,9 +179,9 @@ export const BATTLE_GOLDEN_FIXTURES: readonly BattleGoldenFixture[] = [
     titleZh: "自身退场后强化前排",
     covers: ["selfRetreat", "retreatChain", "statModified"],
     input: input("golden_11_self_retreat_buff", 511, team([unit(MECHANIC_CARRIERS.retreatBuffer, 0, { initialMaxHealth: 1 }), unit(MECHANIC_CARRIERS.highDamageStriker, 1)]), team([unit(MECHANIC_CARRIERS.highDamageStriker, 0)])),
-    expected: { result: "draw", eventTypes: "battleStarted>statModified>environmentApplied>attackWindup>attackWindup>attackExchange>damageApplied>damageApplied>unitRetreated>abilityTriggered>abilitySourceUnavailable>abilitySourceUnavailable>abilityTriggered>statModified>attackWindup>attackWindup>attackExchange>damageApplied>damageApplied>unitRetreated>unitRetreated>battleEnded", eventCount: 22, finalPlayer: "player_carp_0:carp:-3:3:2:0:0:R:-|player_weasel_1:weasel:-2:4:5:0:1:R:-", finalOpponent: "opponent_weasel_0:weasel:-3:4:6:0:0:R:-", diagnostics: [] },
+    expected: { result: "draw", eventTypes: "battleStarted>statModified>environmentApplied>attackWindup>attackWindup>attackExchange>damageApplied>damageApplied>unitRetreated>abilityTriggered>statModified>statModified>abilityTriggered>statModified>attackWindup>attackWindup>attackExchange>damageApplied>damageApplied>unitRetreated>unitRetreated>battleEnded", eventCount: 22, finalPlayer: "player_carp_0:carp:-3:3:2:0:0:R:-|player_weasel_1:weasel:0:6:5:0:1:R:-", finalOpponent: "opponent_weasel_0:weasel:-3:4:6:0:0:R:-", diagnostics: [] },
     mustRemainZh: ["selfRetreat 强化机制会对仍存活前排触发。"],
-    intentionalFutureChangesZh: ["P5B 会把退场和 selfRetreat 链条放入明确 wave。"],
+    intentionalFutureChangesZh: ["P6B 修正了 selfRetreat 被来源退场挡掉的问题；后续只应改变 wave 标注，不应再次让退场技能失效。"],
   },
   {
     id: "golden_12_ally_retreat_buff",
@@ -207,9 +197,9 @@ export const BATTLE_GOLDEN_FIXTURES: readonly BattleGoldenFixture[] = [
     titleZh: "自身退场后给前排护盾",
     covers: ["selfRetreat", "shield", "retreatChain"],
     input: input("golden_13_self_retreat_shield", 513, team([unit(MECHANIC_CARRIERS.retreatShielder, 0, { initialMaxHealth: 1 }), unit(MECHANIC_CARRIERS.beforeAttackBuffer, 1)]), team([unit(MECHANIC_CARRIERS.highDamageStriker, 0)])),
-    expected: { result: "draw", eventTypes: "battleStarted>environmentApplied>attackWindup>attackWindup>attackExchange>damageApplied>damageApplied>unitRetreated>abilityTriggered>abilitySourceUnavailable>abilityTriggered>statModified>attackWindup>attackWindup>abilityTriggered>statModified>attackExchange>damageApplied>damageApplied>unitRetreated>unitRetreated>battleEnded", eventCount: 22, finalPlayer: "player_pangolin_0:pangolin:-5:1:3:0:0:R:-|player_hare_1:hare:-1:5:3:0:1:R:-", finalOpponent: "opponent_weasel_0:weasel:-2:4:6:0:0:R:-", diagnostics: [] },
+    expected: { result: "win", eventTypes: "battleStarted>environmentApplied>attackWindup>attackWindup>attackExchange>damageApplied>damageApplied>unitRetreated>abilityTriggered>statModified>abilityTriggered>statModified>attackWindup>attackWindup>abilityTriggered>statModified>attackExchange>damageApplied>shieldAbsorbed>damageApplied>unitRetreated>battleEnded", eventCount: 22, finalPlayer: "player_pangolin_0:pangolin:-5:1:3:0:0:R:-|player_hare_1:hare:1:5:3:0:1:A:-", finalOpponent: "opponent_weasel_0:weasel:-2:4:6:0:0:R:-", diagnostics: [] },
     mustRemainZh: ["selfRetreat 护盾机制会给新的前排同伴护盾。"],
-    intentionalFutureChangesZh: noFutureChange,
+    intentionalFutureChangesZh: ["P6B 修正了 selfRetreat 被来源退场挡掉的问题；护盾会影响后续普攻结算，这是有意变化。"],
   },
   {
     id: "golden_14_environment_meadow",

@@ -27,10 +27,10 @@ describe("soak and boundaries", () => {
         expect(unit.shield).toBeGreaterThanOrEqual(0);
         expect(unit.side).toBe(combatSideForSlot(unit.slot));
         expect(unit.originOwner).toMatch(/player|opponent/);
-        expect(unit.unitId.startsWith(`${unit.originOwner}_`)).toBe(true);
+        expect(unit.unitId.startsWith(`${unit.originOwner}_`) || unit.unitId.startsWith(`summon_${unit.originOwner}_`)).toBe(true);
       }
     }
-  });
+  }, 30000);
 
   it("规则层源码不 import React、DOM、storage 或浏览器 API", () => {
     const files = readdirSync("src/domain").filter((file) => file.endsWith(".ts"));

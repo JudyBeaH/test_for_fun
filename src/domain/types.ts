@@ -3,6 +3,7 @@ import type { CONTENT_VERSION, ENGINE_VERSION, REGION_ID } from "../content/cons
 export type Habitat = "water" | "land" | "air";
 export type Side = "player" | "opponent";
 export type BattleResult = "win" | "loss" | "draw";
+export type AnimalTier = 1 | 2 | 3 | 4 | 5;
 export type ExpeditionStatus = "active" | "success" | "returned";
 export type ExpeditionPhase =
   | "camp"
@@ -29,7 +30,20 @@ export type SpeciesId =
   | "crow"
   | "pangolin"
   | "egret"
-  | "weasel";
+  | "weasel"
+  | "crucian_carp"
+  | "red_bellied_squirrel"
+  | "yellow_weasel"
+  | "common_kingfisher"
+  | "spot_billed_duck"
+  | "mandarin_duck"
+  | "night_heron"
+  | "chinese_water_deer"
+  | "cabots_tragopan"
+  | "chinese_alligator"
+  | "sparrow"
+  | "white_headed_bulbul"
+  | "black_muntjac";
 export type ItemId = "red_berry" | "river_moss" | "bond_nut" | "pinecone_sling" | "bitter_root" | "melatonin" | "team_lotus_seed";
 
 export type TargetSelector =
@@ -60,7 +74,11 @@ export type EffectDef =
   | { kind: "modifyHealth"; target: TargetSelector; amount: number }
   | { kind: "gainShield"; target: TargetSelector; amount: number }
   | { kind: "reduceAttack"; target: TargetSelector; amount: number }
-  | { kind: "moveSelf"; offset: number; buffPromotedAllyAttack?: number }
+  | { kind: "swapSelfWithNearestAlly"; direction: "ahead" | "behind"; buffSwappedAllyAttack?: number }
+  | { kind: "pushTarget"; target: TargetSelector; offset: number }
+  | { kind: "pullTarget"; target: TargetSelector; offset: number }
+  | { kind: "summonUnit"; speciesId: SpeciesId; level: 1 | 2 | 3; attack: number; health: number; placement: "sourceThenBack" | "frontmostEmpty" | "backmostEmpty" }
+  | { kind: "dealDamageAndGainOnRetreat"; target: TargetSelector; damage: number; attackGain?: number; healthGain?: number }
   | { kind: "applyBattleStatus"; target: TargetSelector; status: BattleStatusDef };
 
 export interface AbilityLevelDef {
@@ -95,7 +113,7 @@ export type LevelUpRewardEffect =
 export interface AnimalDef {
   id: SpeciesId;
   nameZh: string;
-  tier: 1 | 2 | 3;
+  tier: AnimalTier;
   habitats: readonly Habitat[];
   baseAttack: number;
   baseHealth: number;
@@ -241,7 +259,10 @@ export interface OfferSlot<T> {
 
 export interface CampState {
   campId: string;
-  campLevel: 1 | 2 | 3;
+  campLevel: AnimalTier;
+  currentTier: AnimalTier;
+  nextUpgradeRound: number | null;
+  justUpgraded: boolean;
   supply: number;
   freeRefreshes: number;
   animalOffers: Fixed5<OfferSlot<AnimalOffer>>;
@@ -250,11 +271,14 @@ export interface CampState {
 }
 
 export interface ComputedCampRules {
-  campLevel: 1 | 2 | 3;
+  campLevel: AnimalTier;
+  currentTier: AnimalTier;
+  nextUpgradeRound: number | null;
+  justUpgraded: boolean;
   animalOfferSlots: number;
   itemOfferSlots: number;
-  maxAnimalTier: 1 | 2 | 3;
-  animalTierWeights: Record<1 | 2 | 3, number>;
+  maxAnimalTier: AnimalTier;
+  animalTierWeights: Record<AnimalTier, number>;
   baseSupply: number;
   supplyCap: number;
   recruitCost: number;
@@ -269,7 +293,7 @@ export interface ComputedCampRules {
 export interface UpgradeDiscovery {
   discoveryId: string;
   sourceInstanceId: string;
-  targetTier: 1 | 2 | 3;
+  targetTier: AnimalTier;
   candidates: SpeciesId[];
 }
 
@@ -436,6 +460,7 @@ export type BattleEventType =
   | "shieldAbsorbed"
   | "statModified"
   | "unitMoved"
+  | "unitSummoned"
   | "unitRetreated"
   | "lineCompacted"
   | "battleEnded"

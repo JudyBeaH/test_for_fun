@@ -1,5 +1,5 @@
 import { ANIMALS, ANIMAL_BY_ID } from "../content/animals";
-import { CAMP_LEVELS } from "../content/campLevels";
+import { campLevelRowForRound, campLevelStateForRound } from "../content/campLevels";
 import { DEFAULT_CAMP_ECONOMY } from "../content/constants";
 import { ITEMS, ITEM_BY_ID } from "../content/items";
 import { resolveItemTargets } from "./itemTargeting";
@@ -23,6 +23,7 @@ import type {
   ItemTargetPreview,
   OfferId,
   OfferSlot,
+  AnimalTier,
   SpeciesId,
   TeamMember,
   TeamSnapshot,
@@ -112,15 +113,18 @@ export function allOwnedMembers(state: ExpeditionState): TeamMember[] {
   return [...presentMembers(formationMembers(state)), ...presentMembers(reserveMembers(state))];
 }
 
-export function campLevelForRound(round: number): 1 | 2 | 3 {
-  const row = CAMP_LEVELS.find((level) => round >= level.minRound && (level.maxRound === null || round <= level.maxRound));
-  return (row?.level ?? 3) as 1 | 2 | 3;
+export function campLevelForRound(round: number): AnimalTier {
+  return campLevelRowForRound(round).tier;
 }
 
 export function computeCampRules(state: ExpeditionState, extraModifiers: readonly CampModifier[] = []): ComputedCampRules {
-  const level = CAMP_LEVELS.find((row) => row.level === campLevelForRound(state.round)) ?? CAMP_LEVELS[0];
+  const level = campLevelRowForRound(state.round);
+  const levelState = campLevelStateForRound(state.round);
   const rules: ComputedCampRules = {
-    campLevel: level.level,
+    campLevel: level.tier,
+    currentTier: levelState.currentTier,
+    nextUpgradeRound: levelState.nextUpgradeRound,
+    justUpgraded: levelState.justUpgraded,
     animalOfferSlots: level.animalOfferSlots,
     itemOfferSlots: DEFAULT_CAMP_ECONOMY.itemOfferSlots,
     maxAnimalTier: level.maxAnimalTier,
@@ -159,10 +163,11 @@ function applyCampModifier(rules: ComputedCampRules, modifier: CampModifier): vo
   }
 }
 
-function pickTier(rng: Rng, weights: Record<1 | 2 | 3, number>): 1 | 2 | 3 {
-  const total = weights[1] + weights[2] + weights[3];
+function pickTier(rng: Rng, weights: Record<AnimalTier, number>): AnimalTier {
+  const tiers = [1, 2, 3, 4, 5] as const;
+  const total = tiers.reduce((sum, tier) => sum + weights[tier], 0);
   let roll = rng.next() * total;
-  for (const tier of [1, 2, 3] as const) {
+  for (const tier of tiers) {
     roll -= weights[tier];
     if (roll <= 0) return tier;
   }
@@ -208,6 +213,9 @@ export function enterCamp(state: ExpeditionState, previousLeftover = 0): Expedit
   next.camp = {
     campId: makeId("camp", next.expeditionSeed, next.round),
     campLevel: rules.campLevel,
+    currentTier: rules.currentTier,
+    nextUpgradeRound: rules.nextUpgradeRound,
+    justUpgraded: rules.justUpgraded,
     supply,
     freeRefreshes: rules.freeRefreshes,
     animalOffers: fixed5(Array.from({ length: 5 }, (_, index) => {
@@ -328,7 +336,8 @@ function generateDiscoveries(state: ExpeditionState, source: TeamMember, beforeL
   const rules = computeCampRules(state);
   const discoveries: UpgradeDiscovery[] = [];
   for (let level = beforeLevel + 1; level <= afterLevel; level += 1) {
-    const targetTier = Math.min(rules.maxAnimalTier + 1, 3) as 1 | 2 | 3;
+    const desiredTier = Math.min(rules.maxAnimalTier + 1, 5) as AnimalTier;
+    const targetTier = highestAvailableAnimalTierAtOrBelow(desiredTier);
     const pool = ANIMALS.filter((animal) => animal.tier === targetTier).map((animal) => animal.id);
     const rng = createRng(state.expeditionSeed ^ (state.round * 1777) ^ (discoveries.length * 31) ^ source.instanceId.length);
     const candidates: SpeciesId[] = [];
@@ -340,6 +349,13 @@ function generateDiscoveries(state: ExpeditionState, source: TeamMember, beforeL
     discoveries.push({ discoveryId: makeId("discovery", state.expeditionSeed + state.round, state.pendingDiscoveries.length + discoveries.length), sourceInstanceId: source.instanceId, targetTier, candidates });
   }
   return discoveries;
+}
+
+function highestAvailableAnimalTierAtOrBelow(tier: AnimalTier): AnimalTier {
+  for (let candidate = tier; candidate >= 1; candidate -= 1) {
+    if (ANIMALS.some((animal) => animal.tier === candidate)) return candidate as AnimalTier;
+  }
+  return 1;
 }
 
 function clearOffer(slot: OfferSlot<AnimalOffer | ItemOffer>): void {
@@ -802,8 +818,10 @@ export function sortTeamHeuristic(team: readonly TeamMember[]): TeamMember[] {
 }
 
 function roleScore(speciesId: SpeciesId): number {
-  if (["pangolin", "mussel", "hedgehog", "carp"].includes(speciesId)) return 0;
-  if (speciesId === "frog") return 1;
-  if (["swallow", "kingfisher", "crow"].includes(speciesId)) return 4;
+  const animal = ANIMAL_BY_ID[speciesId];
+  const levelOne = animal.ability.levels[0];
+  if (animal.baseHealth >= 6 || levelOne.trigger === "onHurt" || levelOne.trigger === "selfRetreat") return 0;
+  if (levelOne.effects.some((effect) => effect.kind === "swapSelfWithNearestAlly")) return 1;
+  if (levelOne.trigger === "battleStart" || levelOne.trigger === "allyRetreat") return 4;
   return 3;
 }

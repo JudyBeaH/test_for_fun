@@ -1,5 +1,5 @@
 export const ENGINE_VERSION = "0.2.0-prototype";
-export const CONTENT_VERSION = "0.2.0-prototype";
+export const CONTENT_VERSION = "0.3.3-prototype";
 export const REGION_ID = "jiangnan_wetland" as const;
 export const REGION_NAME_ZH = "江南湿地";
 

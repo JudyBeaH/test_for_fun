@@ -115,4 +115,22 @@ describe("P3A drop registry", () => {
     unregisterBottom();
     expect(registry.targetAt({ x: 10, y: 10 })).toBeNull();
   });
+
+  it("does not let stale unregister remove a newer entry with the same id", () => {
+    const registry = createDropRegistry<TestTarget>();
+    const unregisterOld = registry.register({
+      id: "same-slot",
+      target: { kind: "slot", slot: 1 },
+      getBounds: () => ({ left: 0, top: 0, right: 100, bottom: 100 }),
+    });
+    registry.register({
+      id: "same-slot",
+      target: { kind: "slot", slot: 2 },
+      getBounds: () => ({ left: 0, top: 0, right: 100, bottom: 100 }),
+    });
+
+    unregisterOld();
+
+    expect(registry.targetAt({ x: 10, y: 10 })).toEqual({ kind: "slot", slot: 2 });
+  });
 });

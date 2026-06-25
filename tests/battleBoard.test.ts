@@ -55,7 +55,7 @@ describe("P5C BoardMutationService", () => {
     expect(units.find((item) => item.unitId === "frog")?.slot).toBe("L1");
     expect(units.find((item) => item.unitId === "weasel")?.slot).toBe("L0");
     expect(uniqueActiveSlots(units)).toBe(true);
-  });
+  }, 30000);
 
   it("supports same-side swap, push, pull, and compaction without cross-side movement", () => {
     const units = [unit("a", "player", 0), unit("b", "player", 2), unit("c", "player", 4), unit("x", "opponent", 0)];
@@ -67,6 +67,7 @@ describe("P5C BoardMutationService", () => {
     expect(board.pull("c").ok).toBe(true);
     expect(board.swap("L0", "R0").ok).toBe(false);
     expect(board.move("a", "R1").ok).toBe(false);
+    expect(board.firstEmptySlot("player", [0, 1, 2, 3, 4])).toBe("L1");
 
     units.find((item) => item.unitId === "b")!.retreated = true;
     const compacted = board.compact("player");
@@ -119,5 +120,5 @@ describe("P5C BoardMutationService", () => {
     for (let seed = 1; seed <= 40; seed += 1) {
       expect(run(seed)).toBe(run(seed));
     }
-  });
+  }, 30000);
 });

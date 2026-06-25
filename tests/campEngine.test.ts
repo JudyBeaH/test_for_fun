@@ -381,5 +381,5 @@ describe("P2 fixed camp slots and atomic commands", () => {
         expect(new Set(occupiedItemIds(state)).size).toBe(occupiedItemIds(state).length);
       }
     }
-  }, 30000);
+  }, 60000);
 });

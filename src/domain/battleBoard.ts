@@ -73,6 +73,16 @@ export class BoardMutationService {
     return this.activeSideUnits(side).map((unit) => unit.slot);
   }
 
+  firstEmptySlot(side: Side, positions: readonly number[]): BattleSlot | undefined {
+    const validation = this.validateOccupancy();
+    if (!validation.ok) return undefined;
+    for (const position of positions) {
+      const slot = slotForSidePosition(side, position);
+      if (!this.units.some((unit) => !unit.retreated && unit.slot === slot)) return slot;
+    }
+    return undefined;
+  }
+
   moveWithinSide(unitId: string, offset: number): BoardMutationResult {
     const source = this.units.find((unit) => unit.unitId === unitId);
     if (!source || source.retreated) return { ok: false, message: "source unavailable", moved: [] };

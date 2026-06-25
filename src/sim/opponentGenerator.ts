@@ -1,7 +1,8 @@
 import { ANIMALS, ANIMAL_BY_ID } from "../content/animals";
+import { campLevelRowForRound } from "../content/campLevels";
 import { CONTENT_VERSION, ENGINE_VERSION } from "../content/constants";
 import { ENVIRONMENTS } from "../content/environments";
-import { campLevelForRound, createMember, formationMembers, toTeamSnapshot } from "../domain/campEngine";
+import { createMember, formationMembers, toTeamSnapshot } from "../domain/campEngine";
 import { makeId, makeTeamId } from "../domain/ids";
 import { createRng, shuffleDeterministic } from "../domain/rng";
 import type { BattleInput, EnvironmentId, ExpeditionState, SpeciesId, TeamMember } from "../domain/types";
@@ -17,8 +18,8 @@ export function environmentForRound(seed: number, round: number): EnvironmentId 
 export function generateOpponent(state: ExpeditionState) {
   const rng = createRng(state.expeditionSeed ^ (state.round * 104729) ^ (state.badges * 8191));
   const teamSize = clamp(2 + Math.floor((state.round - 1) / 2), 2, 5);
-  const tier = campLevelForRound(state.round);
-  const pool = ANIMALS.filter((animal) => animal.tier <= tier).map((animal) => animal.id);
+  const level = campLevelRowForRound(state.round);
+  const pool = ANIMALS.filter((animal) => animal.tier <= level.maxAnimalTier).map((animal) => animal.id);
   const chosen: SpeciesId[] = [];
   const counts = new Map<SpeciesId, number>();
   const first = rng.pick(pool);
@@ -57,9 +58,10 @@ export function generateOpponent(state: ExpeditionState) {
 
 function sortWeight(speciesId: SpeciesId): number {
   const animal = ANIMAL_BY_ID[speciesId];
-  if (animal.baseHealth >= 7 || animal.ability.levels[0].trigger === "onHurt" || speciesId === "pangolin") return 0;
-  if (animal.ability.levels[0].trigger === "battleStart" || animal.ability.levels[0].trigger === "allyRetreat") return 3;
-  if (speciesId === "frog") return 2;
+  const levelOne = animal.ability.levels[0];
+  if (animal.baseHealth >= 7 || levelOne.trigger === "onHurt" || levelOne.trigger === "selfRetreat") return 0;
+  if (levelOne.trigger === "battleStart" || levelOne.trigger === "allyRetreat") return 3;
+  if (levelOne.effects.some((effect) => effect.kind === "swapSelfWithNearestAlly")) return 2;
   return 1;
 }
 

@@ -7,9 +7,11 @@ import { applyCampCommand, computeCampRules, formationMembers, inventoryItems, m
 import { decodeChallengeCode, encodeChallengeCode } from "../domain/challengeCode";
 import { completeSuccessResolution, createExpedition, finishBattleReport, prepareBattle, resolvePreparedBattle } from "../domain/expeditionEngine";
 import { applyChallengeReward, applyRewardChoice, createRewardChoices } from "../domain/rewardEngine";
+import { slotForSidePosition } from "../domain/battleBoard";
 import type { AppSave, BattleEvent, BattleOutput, CampCommand, ExpeditionState, ItemId, ItemTargetPreview, RegisteredTeam, RewardChoice, Side, SpeciesId, TeamMember, TeamSnapshotUnit, UnitSlotRef } from "../domain/types";
 import { resolveBattle } from "../domain/battleEngine";
 import { compileBattleCues, formatBattleCueTimeline } from "../presentation/battleCueCompiler";
+import { activeSlotEntries, buildBattleFrame, type BattleFrameUnit } from "../presentation/battleFrame";
 import { exportSave, importSaveJson, loadSave, saveAppSave, resetSave, stagingInfo, clearStaging } from "../storage/localRepository";
 import { createDropRegistry } from "./interaction/dropRegistry";
 import { buildCampClickCommand, buildCampDragCommand, campClickSourceAfterKey, preflightCampClickTarget, preflightCampDragCommand, resolveCampItemPreview } from "./interaction/campDragMapping";
@@ -292,7 +294,7 @@ function Camp({ expedition, onAction, onDepart, onInvalidDrop }: { expedition: E
       <InventoryList clickSource={clickSource} inventory={inventory} isLegalClickTarget={isLegalClickTarget} onBeginClickSource={beginClickSource} onClickTarget={clickTarget} dropRegistry={dropRegistry} sourceHandlers={dragController.sourceHandlers} />
     </aside>
     <main className="campMain">
-      <div className="statline"><span>站点 {expedition.round}</span><span>营地 Lv{camp.campLevel}</span><span>章 {expedition.badges}/10</span><span>士气 {expedition.morale}</span><span>补给 {camp.supply}</span><span>入营基础/上限 {rules.baseSupply}/{rules.supplyCap}</span><span>结转 {rules.carrySupplyLimit}</span></div>
+      <div className="statline"><span>站点 {expedition.round}</span><span>营地 T{rules.currentTier}{rules.justUpgraded ? " 新升级" : ""}</span><span>下次升级 {rules.nextUpgradeRound ?? "已满"}</span><span>章 {expedition.badges}/10</span><span>士气 {expedition.morale}</span><span>补给 {camp.supply}</span><span>入营基础/上限 {rules.baseSupply}/{rules.supplyCap}</span><span>结转 {rules.carrySupplyLimit}</span></div>
       {expedition.pendingDiscoveries[0] && <Discovery clickSource={clickSource} discovery={expedition.pendingDiscoveries[0]} onAction={onAction} onBeginClickSource={beginClickSource} sourceHandlers={dragController.sourceHandlers} />}
       {expedition.pendingRecruit && <PendingRecruit clickSource={clickSource} member={expedition.pendingRecruit} onBeginClickSource={beginClickSource} sourceHandlers={dragController.sourceHandlers} />}
       <h2>战斗队：后排 → 前排（领域前排为索引 0）</h2>
@@ -469,7 +471,7 @@ function AnimalAvatar({ speciesId, member, reserve }: { speciesId: SpeciesId; me
   const level = member ? memberLevel(member) : 1;
   const attack = member ? animal.baseAttack + animal.levelAttackBonus[level - 1] + member.permanentAttackBonus : animal.baseAttack;
   const health = member ? animal.baseHealth + animal.levelHealthBonus[level - 1] + member.permanentHealthBonus : animal.baseHealth;
-  return <div className="avatarBlock"><div className="glyph">{animal.visual.emoji || animal.visual.fallbackGlyph}</div><strong>{animal.nameZh} {["Ⅰ", "Ⅱ", "Ⅲ"][level - 1]}</strong><small>{animal.habitats.map((h) => h === "water" ? "水" : h === "land" ? "陆" : "空").join(" ")}</small>{member && <small>✊ {attack} <span className="heart">♥</span> {health} · {member.bondXp}/6 {member.equipment ? "· 装备" : ""} {reserve ? "· Zzz" : ""}</small>}</div>;
+  return <div className="avatarBlock"><div className="glyph">{animal.visual.emoji || animal.visual.fallbackGlyph}</div><strong>{animal.nameZh} {["Ⅰ", "Ⅱ", "Ⅲ"][level - 1]}</strong><small>T{animal.tier} · {animal.habitats.map((h) => h === "water" ? "水" : h === "land" ? "陆" : "空").join(" ")}</small>{member && <small>✊ {attack} <span className="heart">♥</span> {health} · {member.bondXp}/6 {member.equipment ? "· 装备" : ""} {reserve ? "· Zzz" : ""}</small>}</div>;
 }
 
 function ItemAvatar({ itemId, price }: { itemId: ItemId; price?: number }) {
@@ -551,49 +553,6 @@ function BattleView({ expedition, battle, onDone, settings, updateSettings }: { 
   </section>;
 }
 
-type BattleFrameUnit = {
-  unitId: string;
-  snapshot: TeamSnapshotUnit;
-  attack: number;
-  health: number;
-  maxHealth: number;
-  shield: number;
-  position: number;
-  retreated: boolean;
-};
-
-function buildBattleFrame(playerUnits: readonly TeamSnapshotUnit[], opponentUnits: readonly TeamSnapshotUnit[], events: readonly BattleEvent[]): Map<string, BattleFrameUnit> {
-  const frame = new Map<string, BattleFrameUnit>();
-  for (const [side, units] of [["player", playerUnits], ["opponent", opponentUnits]] as const) {
-    for (const unit of units) {
-      const unitId = `${side}_${unit.snapshotUnitId}`;
-      frame.set(unitId, { unitId, snapshot: unit, attack: unit.initialAttack, health: unit.initialMaxHealth, maxHealth: unit.initialMaxHealth, shield: 0, position: unit.position, retreated: false });
-    }
-  }
-  for (const event of events) {
-    const target = event.targetUnitId ? frame.get(event.targetUnitId) : undefined;
-    const source = event.sourceUnitId ? frame.get(event.sourceUnitId) : undefined;
-    if (event.type === "shieldAbsorbed" && target && typeof event.after === "number") target.shield = event.after;
-    if (event.type === "damageApplied" && target && typeof event.after === "number") target.health = event.after;
-    if (event.type === "statModified" && target && typeof event.after === "number") {
-      if (event.metadata.stat === "attack" || event.metadata.stat === "attackReduced") target.attack = event.after;
-      if (event.metadata.stat === "health") {
-        const before = typeof event.before === "number" ? event.before : target.health;
-        const delta = event.after - before;
-        target.health = event.after;
-        target.maxHealth = Math.max(1, target.maxHealth + delta);
-      }
-      if (event.metadata.stat === "shield") target.shield = event.after;
-    }
-    if (event.type === "unitMoved" && source && typeof event.after === "number") source.position = event.after;
-    if (event.type === "unitRetreated" && source) {
-      source.retreated = true;
-      source.health = Math.min(0, source.health);
-    }
-  }
-  return frame;
-}
-
 function movementCause(event: BattleEvent | undefined): unknown {
   return event?.type === "unitMoved" ? event.metadata.causeUnitId ?? event.sourceUnitId : undefined;
 }
@@ -629,29 +588,27 @@ function eventDelta(event: BattleEvent): string {
   }
   if (event.type === "unitRetreated") return "退场 ";
   if (event.type === "unitMoved") return "移位 ";
+  if (event.type === "unitSummoned") return "召唤 ";
   return "";
 }
 
 function BattleQueue({ side, units, frameById, sourceId, targetId, activeMoveById }: { side: Side; units: readonly TeamSnapshotUnit[]; frameById: Map<string, BattleFrameUnit>; sourceId?: string; targetId?: string; activeMoveById: Map<string, BattleEvent> }) {
-  const byPosition = new Map<number, { unit: TeamSnapshotUnit; frame?: BattleFrameUnit; unitId: string }>();
-  for (const unit of units) {
-    const unitId = `${side}_${unit.snapshotUnitId}`;
-    const frame = frameById.get(unitId);
-    // Movement events mutate frame.position; snapshot position is only the initial battle layout.
-    byPosition.set(frame?.position ?? unit.position, { unit, frame, unitId });
-  }
+  const bySlot = activeSlotEntries(frameById, side);
+  void units;
   // Cause marker: position 0 is the front line. Player side renders 4..0 so the centerline-facing unit is front.
   const positions = side === "player" ? [4, 3, 2, 1, 0] : [0, 1, 2, 3, 4];
   return <div className={`battleQueue ${side}`}>
     <div className="teamTag">{side === "player" ? "玩家：后排 → 前排" : "对手：前排 ← 后排"}</div>
     {positions.map((position) => {
-      const entry = byPosition.get(position);
+      const entry = bySlot.get(slotForSidePosition(side, position));
       if (!entry) return <article className="battleSlot emptyBattleSlot" key={position}><span>{position + 1}</span></article>;
-      const { unit, frame, unitId } = entry;
+      const unit = entry.snapshot;
+      const frame = entry;
+      const unitId = entry.unitId;
       const highlighted = sourceId === unitId || targetId === unitId;
       const source = sourceId === unitId;
       const target = targetId === unitId;
-      return <BattlePet key={unit.snapshotUnitId} unit={unit} frame={frame} side={side} highlighted={highlighted} source={source} target={target} moveEvent={activeMoveById.get(unitId)} />;
+      return <BattlePet key={unitId} unit={unit} frame={frame} side={side} highlighted={highlighted} source={source} target={target} moveEvent={activeMoveById.get(unitId)} />;
     })}
   </div>;
 }

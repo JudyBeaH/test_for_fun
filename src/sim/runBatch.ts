@@ -125,8 +125,9 @@ if (import.meta.url.endsWith(process.argv[1] ?? "")) {
   const path = "artifacts/sim-report.json";
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(report, null, 2));
-  console.log("Project Wildtrail v0.2 sim");
-  console.log(`runs=${runs} seed=${seed}`);
+  console.log("Project Wildtrail v0.3 sim");
+  console.log(`runs=${runs} seed=${seed} content=${report.contentVersion} animals=${report.animalCount}`);
+  console.log(`tierCounts=T1:${report.animalTierCounts[1]} T2:${report.animalTierCounts[2]} T3:${report.animalTierCounts[3]} T4:${report.animalTierCounts[4]} T5:${report.animalTierCounts[5]}`);
   console.log(`successRate=${(report.successRate * 100).toFixed(1)}% averageBadges=${report.averageBadges.toFixed(2)} averageRounds=${report.averageRounds.toFixed(2)}`);
   console.log(`avgEvents=${report.averageBattleEvents.toFixed(1)} drawRate=${(report.drawRate * 100).toFixed(1)}% safetyCaps=${report.safetyCapCount}`);
   console.log(`merges=${report.merges} upgradeDiscoveries=${report.upgradeDiscoveries} melatoninWakes=${report.melatonin.wakes}`);

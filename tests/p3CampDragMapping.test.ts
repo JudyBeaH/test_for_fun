@@ -113,6 +113,18 @@ describe("P3B camp drag mapping", () => {
     expect(result.state.unitsById.frog_b.bondXp).toBe(2);
   });
 
+  it("maps Lv2 plus Lv1 same-species drops in the expedition team to mergeUnits", () => {
+    const state = baseState();
+    state.unitsById.frog_a.bondXp = 3;
+    state.unitsById.frog_b.bondXp = 1;
+
+    const result = runGesture(state, { kind: "ownedUnit", unitId: "frog_a" }, { kind: "unitSlot", ref: { zone: "formation", slot: 3 } });
+
+    expect(result.dispatched).toEqual([{ type: "mergeUnits", sourceUnitId: "frog_a", targetUnitId: "frog_b" }]);
+    expect(result.state.unitsById.frog_a).toBeUndefined();
+    expect(result.state.unitsById.frog_b.bondXp).toBe(4);
+  });
+
   it("maps animal offers to exact unit slots or recruitAndMerge on same species", () => {
     const exact = runGesture(baseState(), { kind: "animalOffer", offerId: "offer_otter" }, { kind: "unitSlot", ref: { zone: "reserve", slot: 2 } });
     expect(exact.dispatched).toEqual([{ type: "recruitAnimal", offerId: "offer_otter", to: { zone: "reserve", slot: 2 } }]);

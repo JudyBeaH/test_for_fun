@@ -1,4 +1,5 @@
 import { ANIMALS } from "../content/animals";
+import { campLevelStateForRound } from "../content/campLevels";
 import type { AppSave, ExpeditionState, Fixed2, Fixed3, Fixed5, ItemInstance, ItemInstanceId, OfferSlot, SpeciesId, TeamMember, UnitId } from "./types";
 
 export const SAVE_SCHEMA_VERSION = 3;
@@ -95,6 +96,11 @@ function migrateExpedition(value: unknown): ExpeditionState | null {
     const emptyItem = { slotId: "empty_item_slot", kind: "item" as const, unlocked: false, held: false, offer: null };
     exp.camp.animalOffers = fixed5(exp.camp.animalOffers ?? legacyCamp.animalSlots ?? [], emptyAnimal);
     exp.camp.itemOffers = fixed2(exp.camp.itemOffers ?? legacyCamp.itemSlots ?? [], emptyItem);
+    const levelState = campLevelStateForRound(exp.round);
+    exp.camp.campLevel = levelState.currentTier;
+    exp.camp.currentTier = levelState.currentTier;
+    exp.camp.nextUpgradeRound = levelState.nextUpgradeRound;
+    exp.camp.justUpgraded = levelState.justUpgraded;
     delete legacyCamp.animalSlots;
     delete legacyCamp.itemSlots;
   }

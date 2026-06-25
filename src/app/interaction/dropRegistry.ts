@@ -23,8 +23,9 @@ export function createDropRegistry<TTarget>(): DropRegistry<TTarget> {
       const existing = entries.findIndex((candidate) => candidate.id === entry.id);
       if (existing >= 0) entries.splice(existing, 1);
       entries.push(entry);
+      const registered = entry;
       return () => {
-        const index = entries.findIndex((candidate) => candidate.id === entry.id);
+        const index = entries.findIndex((candidate) => candidate === registered);
         if (index >= 0) entries.splice(index, 1);
       };
     },
